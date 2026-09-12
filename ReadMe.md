@@ -7,6 +7,12 @@ To get started with the AspireApp1 example project, follow these steps:
 1. Clone the repository
 2. Run the application `AspireApp1.AppHost` to start the server
 
+## Arkitekturöversikt
+
+För en samlad helhetsbeskrivning av hur alla tjänster, flöden, spårning och datalagring hänger ihop, se:
+
+- [CLAUDE.md](CLAUDE.md)
+
 ## DIGG + W3C Trace Context (spårbarhet)
 - Tjänsterna använder W3C Trace Context (`traceparent`, `tracestate`) via .NET `Activity`/OpenTelemetry.
 - `trace_id`, `span_id`, `service.name`, `timestamp_utc` och `correlation_id` loggas strukturerat.
