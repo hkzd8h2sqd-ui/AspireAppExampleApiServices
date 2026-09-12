@@ -17,6 +17,12 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
     private static readonly Regex TraceParentRegex = new(
         @"^00-([0-9a-fA-F]{32})-([0-9a-fA-F]{16})-[0-9a-fA-F]{2}$",
         RegexOptions.Compiled);
+    private static readonly Regex TraceIdRegex = new(
+        @"^[0-9a-fA-F]{32}$",
+        RegexOptions.Compiled);
+    private static readonly Regex AspireTraceDetailRegex = new(
+        @"(?:^|/)traces/detail/([0-9a-fA-F]{32})(?:$|[/?#])",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     /// <summary>
     /// Retrieves a trace by its 32-character hex trace ID or a full W3C traceparent string.
@@ -25,15 +31,11 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
     {
         using var db = dbFactory.CreateDbContext();
 
-        var input = traceId.Trim();
-
-        // Auto-detect traceparent format and extract traceId
-        if (TryParseTraceParent(input, out var parsedTraceId, out _))
+        if (!TryNormalizeTraceIdInput(traceId, out var normalizedId, out _))
         {
-            input = parsedTraceId;
+            logger.LogInformation("TraceQuery by traceId rejected invalid input: {TraceInput}", traceId);
+            return null;
         }
-
-        var normalizedId = input.ToLowerInvariant();
 
         var jobs = await db.JobStates
             .Where(j => j.TraceId != null && j.TraceId.ToLower() == normalizedId)
@@ -50,17 +52,23 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
             .OrderBy(h => h.CheckedAt)
             .ToListAsync(cancellationToken);
 
-        var flowSteps = await db.FlowStepRecords
+        var tracedFlowSteps = await db.FlowStepRecords
             .Where(s => s.TraceId != null && s.TraceId.ToLower() == normalizedId)
             .OrderBy(s => s.StepOrder)
             .ToListAsync(cancellationToken);
 
-        var flowRunIds = flowSteps.Select(s => s.FlowRunId).Distinct().ToList();
+        var flowRunIds = tracedFlowSteps.Select(s => s.FlowRunId).Distinct().ToList();
         var flowRuns = flowRunIds.Count > 0
             ? await db.FlowRunRecords
                 .Where(r => flowRunIds.Contains(r.FlowRunId))
                 .ToListAsync(cancellationToken)
             : [];
+        var flowSteps = flowRunIds.Count > 0
+            ? await db.FlowStepRecords
+                .Where(s => flowRunIds.Contains(s.FlowRunId))
+                .OrderBy(s => s.StepOrder)
+                .ToListAsync(cancellationToken)
+            : tracedFlowSteps;
 
         var spanRecords = await db.SpanRecords
             .Where(s => s.TraceId != null && s.TraceId.ToLower() == normalizedId)
@@ -183,6 +191,63 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
 
         traceId = string.Empty;
         spanId = string.Empty;
+        return false;
+    }
+
+    public static bool TryNormalizeTraceIdInput(string value, out string traceId, out string? spanId)
+    {
+        traceId = string.Empty;
+        spanId = null;
+
+        var input = value.Trim();
+        if (input.Length == 0)
+        {
+            return false;
+        }
+
+        if (TryParseTraceParent(input, out var parsedTraceId, out var parsedSpanId))
+        {
+            traceId = parsedTraceId;
+            spanId = parsedSpanId;
+            return true;
+        }
+
+        if (TryExtractTraceIdFromAspireTraceDetailUrl(input, out var traceIdFromUrl))
+        {
+            traceId = traceIdFromUrl;
+            return true;
+        }
+
+        if (TraceIdRegex.IsMatch(input))
+        {
+            traceId = input.ToLowerInvariant();
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractTraceIdFromAspireTraceDetailUrl(string input, out string traceId)
+    {
+        traceId = string.Empty;
+
+        if (Uri.TryCreate(input, UriKind.Absolute, out var uri))
+        {
+            var absoluteMatch = AspireTraceDetailRegex.Match(uri.AbsoluteUri);
+            if (absoluteMatch.Success)
+            {
+                traceId = absoluteMatch.Groups[1].Value.ToLowerInvariant();
+                return true;
+            }
+        }
+
+        var relativeMatch = AspireTraceDetailRegex.Match(input);
+        if (relativeMatch.Success)
+        {
+            traceId = relativeMatch.Groups[1].Value.ToLowerInvariant();
+            return true;
+        }
+
         return false;
     }
 
@@ -397,6 +462,56 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
                     ? SpanStatus.Warning
                     : spans.Count > 0 ? SpanStatus.OK : SpanStatus.Unknown;
 
+        var flowRunStates = flowRuns.Select(flowRun =>
+        {
+            var runSteps = flowSteps
+                .Where(s => s.FlowRunId == flowRun.FlowRunId)
+                .OrderBy(s => s.StepOrder)
+                .ToList();
+
+            var totalSteps = runSteps.Count > 0 ? runSteps.Max(s => s.StepOrder) : 0;
+            var firstFailed = runSteps.FirstOrDefault(s => s.Status == FlowStepStatus.Failed);
+            var activeStep = runSteps.FirstOrDefault(s => s.Status is FlowStepStatus.Running or FlowStepStatus.Retrying);
+            var lastSuccess = runSteps
+                .Where(s => s.Status == FlowStepStatus.Completed)
+                .Select(s => (int?)s.StepOrder)
+                .Max();
+
+            var currentStep = firstFailed?.StepOrder
+                ?? activeStep?.StepOrder
+                ?? lastSuccess
+                ?? (totalSteps > 0 ? 1 : 0);
+
+            var currentService = firstFailed?.ServiceName
+                ?? activeStep?.ServiceName
+                ?? runSteps.FirstOrDefault(s => s.StepOrder == currentStep)?.ServiceName;
+
+            var status = firstFailed is not null
+                ? "Fel"
+                : activeStep is not null
+                    ? "Pågår"
+                    : runSteps.Any(s => s.Status == FlowStepStatus.Pending) && !runSteps.Any(s => s.Status == FlowStepStatus.Completed)
+                        ? "Väntar"
+                        : flowRun.Status == FlowRunStatus.Running
+                            ? "Pågår"
+                            : flowRun.Status == FlowRunStatus.Completed
+                            ? "Klar"
+                            : "Okänd";
+
+            return new FlowRunStateModel
+            {
+                FlowRunId = flowRun.FlowRunId,
+                FlowName = flowRun.FlowName,
+                CurrentStep = currentStep,
+                TotalSteps = totalSteps,
+                CurrentService = currentService,
+                Status = status,
+                LastSuccessStep = lastSuccess,
+                ErrorStep = firstFailed?.StepOrder,
+                ErrorMessage = firstFailed?.ErrorMessage ?? flowRun.ErrorMessage
+            };
+        }).ToList();
+
         return new TraceModel
         {
             TraceId = traceId,
@@ -406,6 +521,7 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
                 ?? flowRuns.FirstOrDefault()?.CorrelationId,
             OverallStatus = overallStatus,
             Spans = spans,
+            FlowRuns = flowRunStates,
             StartTime = spans.Count > 0 ? spans.Min(s => s.StartTime) : DateTimeOffset.UtcNow
         };
     }

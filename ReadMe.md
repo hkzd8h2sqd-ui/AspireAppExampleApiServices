@@ -19,7 +19,12 @@ To get started with the AspireApp1 example project, follow these steps:
 1. Starta `AspireApp1.AppHost`.
 2. Kör anrop från `webfrontend` till backend (exempel: väderflödet).
 3. Öppna trace-vyn i Aspire dashboard och följ samma `trace_id` genom tjänstekedjan.
-4. Kontrollera worker-loggar för samma `trace_id` och `correlation_id` vid async-jobb/retry/finalt fel.
+4. På sidan **Processflöde** kan du söka med:
+   - ren `trace_id` (32 hex-tecken)
+   - full `traceparent` (`00-<trace_id>-<span_id>-<flags>`)
+   - Aspire URL-format, t.ex. `https://.../traces/detail/<trace_id>`
+5. Processflöde visar stegindikering i formatet **Steg X/N** samt markerar var flödet fastnat med tjänst och felorsak.
+6. Kontrollera worker-loggar för samma `trace_id` och `correlation_id` vid async-jobb/retry/finalt fel.
 
 ## Frontend-visualisering av processflöde
 

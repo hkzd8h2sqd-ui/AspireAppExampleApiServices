@@ -132,12 +132,61 @@
     </div>
 </div>
 
+<div class="card mt-4">
+    <div class="card-header fw-semibold">Senaste körningar</div>
+    <div class="card-body">
+        @if (_latestRuns.Count == 0)
+        {
+            <div class="text-muted small">Inga körningar registrerade ännu.</div>
+        }
+        else
+        {
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <span class="badge bg-primary">Pågår: @_runningCount</span>
+                <span class="badge bg-success">Klar: @_completedCount</span>
+                <span class="badge bg-danger">Fel: @_failedCount</span>
+                <span class="badge bg-secondary">Väntar: @_waitingCount</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Flöde</th>
+                            <th>Status</th>
+                            <th>Steg</th>
+                            <th>Tjänst</th>
+                            <th>Start</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var run in _latestRuns)
+                        {
+                            <tr>
+                                <td class="small">@run.FlowName</td>
+                                <td><span class="badge @GetStatusBadge(run.Status)">@run.Status</span></td>
+                                <td class="small">Steg @run.CurrentStep/@run.TotalSteps</td>
+                                <td class="small">@run.CurrentService</td>
+                                <td class="small text-muted">@run.StartedAt.ToString("HH:mm:ss")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
 @code {
     private bool _statsLoaded;
     private int _jobCount;
     private int _flowRunCount;
     private int _spanCount;
     private int _healthCheckCount;
+    private int _runningCount;
+    private int _completedCount;
+    private int _failedCount;
+    private int _waitingCount;
+    private List<FlowRunOverview> _latestRuns = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -147,6 +196,61 @@
             _flowRunCount = await Db.FlowRunRecords.CountAsync();
             _spanCount = await Db.SpanRecords.CountAsync();
             _healthCheckCount = await Db.ServiceHealthRecords.CountAsync();
+
+            var latestFlowRuns = await Db.FlowRunRecords
+                .OrderByDescending(r => r.StartedAt)
+                .Take(5)
+                .ToListAsync();
+
+            var flowRunIds = latestFlowRuns.Select(r => r.FlowRunId).ToList();
+            var allSteps = flowRunIds.Count > 0
+                ? await Db.FlowStepRecords
+                    .Where(s => flowRunIds.Contains(s.FlowRunId))
+                    .ToListAsync()
+                : [];
+
+            _latestRuns = latestFlowRuns.Select(run =>
+            {
+                var steps = allSteps.Where(s => s.FlowRunId == run.FlowRunId).OrderBy(s => s.StepOrder).ToList();
+                var failedStep = steps.FirstOrDefault(s => s.Status == FlowStepStatus.Failed);
+                var runningStep = steps.FirstOrDefault(s => s.Status is FlowStepStatus.Running or FlowStepStatus.Retrying);
+                var totalSteps = steps.Count > 0 ? steps.Max(s => s.StepOrder) : 0;
+                var lastSuccess = steps
+                    .Where(s => s.Status == FlowStepStatus.Completed)
+                    .Select(s => (int?)s.StepOrder)
+                    .Max();
+                var currentStep = failedStep?.StepOrder ?? runningStep?.StepOrder ?? lastSuccess ?? (totalSteps > 0 ? 1 : 0);
+                var currentService = failedStep?.ServiceName
+                    ?? runningStep?.ServiceName
+                    ?? steps.FirstOrDefault(s => s.StepOrder == currentStep)?.ServiceName
+                    ?? "okänd";
+                var status = failedStep is not null
+                    ? "Fel"
+                    : runningStep is not null
+                        ? "Pågår"
+                        : steps.Any(s => s.Status == FlowStepStatus.Pending) && !steps.Any(s => s.Status == FlowStepStatus.Completed)
+                            ? "Väntar"
+                            : run.Status == FlowRunStatus.Running
+                                ? "Pågår"
+                                : run.Status == FlowRunStatus.Completed
+                                ? "Klar"
+                                : "Okänd";
+
+                return new FlowRunOverview
+                {
+                    FlowName = run.FlowName,
+                    Status = status,
+                    CurrentStep = currentStep,
+                    TotalSteps = totalSteps,
+                    CurrentService = currentService,
+                    StartedAt = run.StartedAt
+                };
+            }).ToList();
+
+            _runningCount = _latestRuns.Count(r => r.Status == "Pågår");
+            _completedCount = _latestRuns.Count(r => r.Status == "Klar");
+            _failedCount = _latestRuns.Count(r => r.Status == "Fel");
+            _waitingCount = _latestRuns.Count(r => r.Status == "Väntar");
         }
         catch (Exception ex)
         {
@@ -154,5 +258,24 @@
             Logger.LogWarning(ex, "Could not load state store stats on home page");
         }
         _statsLoaded = true;
+    }
+
+    private static string GetStatusBadge(string status) => status switch
+    {
+        "Klar" => "bg-success",
+        "Fel" => "bg-danger",
+        "Pågår" => "bg-primary",
+        "Väntar" => "bg-secondary",
+        _ => "bg-secondary"
+    };
+
+    private sealed class FlowRunOverview
+    {
+        public string FlowName { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public int CurrentStep { get; init; }
+        public int TotalSteps { get; init; }
+        public string CurrentService { get; init; } = string.Empty;
+        public DateTimeOffset StartedAt { get; init; }
     }
 }

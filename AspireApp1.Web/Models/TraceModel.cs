@@ -37,5 +37,19 @@ public class TraceModel
     public string? CorrelationId { get; set; }
     public SpanStatus OverallStatus { get; set; } = SpanStatus.Unknown;
     public List<SpanModel> Spans { get; set; } = [];
+    public List<FlowRunStateModel> FlowRuns { get; set; } = [];
     public DateTimeOffset StartTime { get; set; }
+}
+
+public class FlowRunStateModel
+{
+    public string FlowRunId { get; set; } = string.Empty;
+    public string FlowName { get; set; } = string.Empty;
+    public int CurrentStep { get; set; }
+    public int TotalSteps { get; set; }
+    public string? CurrentService { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public int? LastSuccessStep { get; set; }
+    public int? ErrorStep { get; set; }
+    public string? ErrorMessage { get; set; }
 }

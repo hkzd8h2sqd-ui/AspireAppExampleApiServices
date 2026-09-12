@@ -28,7 +28,7 @@
         </div>
         <div class="col-md-6">
             <label class="form-label fw-semibold">
-                @if (searchType == "traceId") { <text>TraceId (hex, minst 16 tecken) eller traceparent</text> }
+                @if (searchType == "traceId") { <text>TraceId (32 hex), traceparent eller Aspire trace-detail URL</text> }
                 else if (searchType == "correlationId") { <text>CorrelationId (GUID eller sträng)</text> }
                 else { <text>SpanId (16 hexadecimala tecken)</text> }
             </label>
@@ -72,7 +72,10 @@
 <!-- Results -->
 @if (notFound)
 {
-    <div class="alert alert-info">Inga flödessteg hittades för angivet ID.</div>
+    <div class="alert alert-info">
+        <div><strong>Ingen träff för angivet ID.</strong></div>
+        <div class="small mt-1">Tips: använd 32 tecken TraceId, hela traceparent-värdet eller URL-formatet <code>/traces/detail/&lt;traceId&gt;</code>. Prova annars CorrelationId eller SpanId.</div>
+    </div>
 }
 else if (currentTrace is not null)
 {
@@ -105,6 +108,55 @@ else if (currentTrace is not null)
             <span class="text-success small">@_copyFeedback</span>
         }
     </div>
+
+    @if (currentTrace.FlowRuns.Count > 0)
+    {
+        <div class="row g-3 mb-3">
+            @foreach (var flow in currentTrace.FlowRuns.Take(3))
+            {
+                <div class="col-lg-4">
+                    <div class="border rounded p-3 h-100">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <strong>@flow.FlowName</strong>
+                            <span class="badge @GetFlowStatusBadgeClass(flow.Status)">@flow.Status</span>
+                        </div>
+                        <div class="small text-muted mb-1">Steg @flow.CurrentStep / @flow.TotalSteps</div>
+                        <div class="progress mb-2" style="height:0.5rem;">
+                            <div class="progress-bar @GetFlowProgressClass(flow.Status)" role="progressbar" style="width:@GetFlowProgressPercent(flow).ToString("F0", System.Globalization.CultureInfo.InvariantCulture)%"></div>
+                        </div>
+                        <div class="small">
+                            <span class="fw-semibold">Aktiv tjänst:</span> @(flow.CurrentService ?? "okänd")
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    @if (GetPrimaryFlowRunState(currentTrace) is FlowRunStateModel primaryFlow && primaryFlow.ErrorStep is not null)
+    {
+        <div class="alert alert-danger">
+            <strong>Var fastnade det?</strong> Flödet stoppade i steg @primaryFlow.ErrorStep/@primaryFlow.TotalSteps i @(primaryFlow.CurrentService ?? "okänd tjänst").
+            @if (!string.IsNullOrWhiteSpace(primaryFlow.ErrorMessage))
+            {
+                <div class="small mt-1">Orsak: @primaryFlow.ErrorMessage</div>
+            }
+            @if (primaryFlow.LastSuccessStep is not null)
+            {
+                <div class="small">Senaste lyckade steg: @primaryFlow.LastSuccessStep/@primaryFlow.TotalSteps.</div>
+            }
+        </div>
+    }
+    else if (GetPrimaryFlowRunState(currentTrace) is FlowRunStateModel inProgressFlow && inProgressFlow.Status == "Pågår")
+    {
+        <div class="alert alert-primary">
+            <strong>Pågående:</strong> steg @inProgressFlow.CurrentStep/@inProgressFlow.TotalSteps i @(inProgressFlow.CurrentService ?? "okänd tjänst").
+            @if (inProgressFlow.LastSuccessStep is not null)
+            {
+                <span class="small ms-1">(senaste lyckade: @inProgressFlow.LastSuccessStep/@inProgressFlow.TotalSteps)</span>
+            }
+        </div>
+    }
 
     <!-- View toggle + filters -->
     <div class="d-flex flex-wrap gap-3 align-items-center mb-3">
@@ -292,13 +344,14 @@ else if (currentTrace is not null)
         }
 
         var trimmedInput = searchInput.Trim();
+        var normalizedInput = trimmedInput;
+        string? extractedSpanId = null;
 
         if (searchType == "traceId")
         {
-            // Accept both a plain traceId AND a full W3C traceparent string
-            if (!TraceIdRegex.IsMatch(trimmedInput) && !TraceParentRegex.IsMatch(trimmedInput))
+            if (!TraceQueryService.TryNormalizeTraceIdInput(trimmedInput, out normalizedInput, out extractedSpanId))
             {
-                validationError = "TraceId måste vara 16–32 hexadecimala tecken, eller ett W3C traceparent-värde (00-{traceId}-{spanId}-{flags}).";
+                validationError = "TraceId måste vara 32 hexadecimala tecken, ett W3C traceparent-värde, eller en Aspire trace-detail URL.";
                 return;
             }
         }
@@ -314,11 +367,21 @@ else if (currentTrace is not null)
         {
             TraceModel? trace = searchType switch
             {
-                "traceId" => await TraceQuery.GetByTraceIdAsync(trimmedInput),
-                "correlationId" => await TraceQuery.GetByCorrelationIdAsync(trimmedInput),
-                "spanId" => await TraceQuery.GetBySpanIdAsync(trimmedInput),
+                "traceId" => await TraceQuery.GetByTraceIdAsync(normalizedInput),
+                "correlationId" => await TraceQuery.GetByCorrelationIdAsync(normalizedInput),
+                "spanId" => await TraceQuery.GetBySpanIdAsync(normalizedInput),
                 _ => null
             };
+
+            if (trace is null && searchType == "traceId")
+            {
+                trace = await TraceQuery.GetByCorrelationIdAsync(normalizedInput);
+            }
+
+            if (trace is null && searchType == "traceId" && extractedSpanId is not null)
+            {
+                trace = await TraceQuery.GetBySpanIdAsync(extractedSpanId);
+            }
 
             if (trace is null || trace.Spans.Count == 0)
             {
@@ -334,9 +397,8 @@ else if (currentTrace is not null)
                     highlightSpanId = trimmedInput.ToLowerInvariant();
                     highlightedSpanIds = [highlightSpanId];
                 }
-                else if (searchType == "traceId" && TraceQueryService.TryParseTraceParent(trimmedInput, out _, out var extractedSpanId))
+                else if (searchType == "traceId" && extractedSpanId is not null)
                 {
-                    // When searching by traceparent, highlight the span matching the embedded spanId
                     highlightSpanId = extractedSpanId;
                     highlightedSpanIds = [highlightSpanId];
                 }
@@ -490,6 +552,40 @@ else if (currentTrace is not null)
         _ => "bg-secondary"
     };
 
+    private static string GetFlowStatusBadgeClass(string status) => status switch
+    {
+        "Klar" => "bg-success",
+        "Fel" => "bg-danger",
+        "Pågår" => "bg-primary",
+        "Väntar" => "bg-secondary",
+        _ => "bg-secondary"
+    };
+
+    private static string GetFlowProgressClass(string status) => status switch
+    {
+        "Klar" => "bg-success",
+        "Fel" => "bg-danger",
+        "Pågår" => "bg-primary",
+        _ => "bg-secondary"
+    };
+
+    private static double GetFlowProgressPercent(FlowRunStateModel flow)
+    {
+        if (flow.TotalSteps <= 0)
+        {
+            return 0;
+        }
+
+        return Math.Clamp((double)flow.CurrentStep / flow.TotalSteps * 100d, 0d, 100d);
+    }
+
+    private static FlowRunStateModel? GetPrimaryFlowRunState(TraceModel trace)
+    {
+        return trace.FlowRuns.FirstOrDefault(f => f.ErrorStep is not null)
+            ?? trace.FlowRuns.FirstOrDefault(f => f.Status == "Pågår")
+            ?? trace.FlowRuns.FirstOrDefault();
+    }
+
     private RenderFragment RenderSpanTree(SpanModel span, List<SpanModel> allSpans, int depth) => __builder =>
     {
         var children = allSpans.Where(s => s.ParentSpanId == span.SpanId).OrderBy(s => s.StartTime).ToList();
@@ -581,7 +677,5 @@ else if (currentTrace is not null)
         </div>
     };
 
-    private static readonly Regex TraceIdRegex = new(@"^[0-9a-fA-F]{16,32}$", RegexOptions.Compiled);
     private static readonly Regex SpanIdRegex = new(@"^[0-9a-fA-F]{16}$", RegexOptions.Compiled);
-    private static readonly Regex TraceParentRegex = new(@"^00-[0-9a-fA-F]{32}-[0-9a-fA-F]{16}-[0-9a-fA-F]{2}$", RegexOptions.Compiled);
 }
