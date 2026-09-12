@@ -3,8 +3,11 @@
 @implements IDisposable
 @using AspireApp1.StateStore
 @using AspireApp1.Web.Models
+@using System.Net.Http.Json
+@using System.Text.Json
 @using Microsoft.EntityFrameworkCore
 @inject IDbContextFactory<StateStoreDbContext> DbFactory
+@inject IHttpClientFactory HttpClientFactory
 @inject ILogger<FlowRuns> Logger
 
 <PageTitle>Alla körningar</PageTitle>
@@ -73,6 +76,17 @@ else
                             <code class="small">@run.CorrelationId</code>
                         </div>
                         <div class="d-flex gap-2 flex-wrap align-items-end justify-content-start">
+                            <button class="btn btn-outline-danger btn-sm" @onclick="() => RestartFlowAsync(run)" disabled="@IsRestarting(run.FlowRunId)">
+                                @if (IsRestarting(run.FlowRunId))
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                                    <span>Återstartar…</span>
+                                }
+                                else
+                                {
+                                    <span>Återstarta flöde</span>
+                                }
+                            </button>
                             @if (!string.IsNullOrWhiteSpace(run.TraceId))
                             {
                                 <a class="btn btn-outline-primary btn-sm" href="/processflow?traceId=@Uri.EscapeDataString(run.TraceId)">Öppna via TraceId</a>
@@ -83,6 +97,15 @@ else
                             }
                         </div>
                     </div>
+
+                    @if (_restartFeedback.TryGetValue(run.FlowRunId, out var feedback))
+                    {
+                        <div class="alert alert-success py-2 px-3 mb-2">@feedback</div>
+                    }
+                    @if (_restartError.TryGetValue(run.FlowRunId, out var error))
+                    {
+                        <div class="alert alert-danger py-2 px-3 mb-2">@error</div>
+                    }
 
                     <div class="flow-run-timeline">
                         @foreach (var step in run.Steps)
@@ -117,6 +140,9 @@ else
     private int _completedCount;
     private int _failedCount;
     private int _waitingCount;
+    private HashSet<string> _restartingRunIds = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string> _restartFeedback = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string> _restartError = new(StringComparer.OrdinalIgnoreCase);
     private List<FlowRunListItem> _runs = [];
     private HashSet<string> _expandedRuns = new(StringComparer.OrdinalIgnoreCase);
     private System.Threading.Timer? _refreshTimer;
@@ -202,12 +228,51 @@ else
     }
 
     private bool IsExpanded(string flowRunId) => _expandedRuns.Contains(flowRunId);
+    private bool IsRestarting(string flowRunId) => _restartingRunIds.Contains(flowRunId);
 
     private void ToggleExpand(string flowRunId)
     {
         if (!_expandedRuns.Add(flowRunId))
         {
             _expandedRuns.Remove(flowRunId);
+        }
+    }
+
+    private async Task RestartFlowAsync(FlowRunListItem run)
+    {
+        _restartingRunIds.Add(run.FlowRunId);
+        _restartFeedback.Remove(run.FlowRunId);
+        _restartError.Remove(run.FlowRunId);
+
+        try
+        {
+            var http = HttpClientFactory.CreateClient("webfrontend");
+            var response = await http.PostAsync($"/api/flow/{Uri.EscapeDataString(run.FlowRunId)}/restart", content: null);
+            if (!response.IsSuccessStatusCode)
+            {
+                _restartError[run.FlowRunId] = $"Kunde inte återstarta flödet (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            using var doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
+            var newRunId = doc?.RootElement.TryGetProperty("flowRunId", out var runIdElement) == true
+                ? runIdElement.GetString()
+                : null;
+            _restartFeedback[run.FlowRunId] = $"Ny körning startad{(string.IsNullOrWhiteSpace(newRunId) ? "." : $": {newRunId}")}";
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Could not restart flow run {FlowRunId}", run.FlowRunId);
+            _restartError[run.FlowRunId] = "Återstart misslyckades. Försök igen.";
+        }
+        finally
+        {
+            _restartingRunIds.Remove(run.FlowRunId);
+            if (!_isDisposed)
+            {
+                StateHasChanged();
+            }
         }
     }
 
