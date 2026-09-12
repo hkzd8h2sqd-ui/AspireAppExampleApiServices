@@ -163,6 +163,12 @@ else if (currentTrace is not null)
             }
         </div>
     }
+    else if (GetPrimaryFlowRunState(currentTrace) is FlowRunStateModel waitingFlow && waitingFlow.Status == "Väntar")
+    {
+        <div class="alert alert-secondary">
+            <strong>Väntar:</strong> nästa steg är @waitingFlow.CurrentStep/@waitingFlow.TotalSteps i @(waitingFlow.CurrentService ?? "okänd tjänst").
+        </div>
+    }
 
     <!-- View toggle + filters -->
     <div class="d-flex flex-wrap gap-3 align-items-center mb-3">
