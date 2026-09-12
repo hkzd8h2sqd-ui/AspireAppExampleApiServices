@@ -19,7 +19,15 @@ public class StatusMonitor(
 {
     private static readonly ActivitySource activitySource = new("AspireApp1.WorkerService4");
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(30);
-    private static readonly string[] MonitoredServices = ["workerservice1", "workerservice2", "workerservice3"];
+    private static readonly string[] MonitoredServices =
+    [
+        "webfrontend",
+        "apiservice",
+        "apiserviceforecast",
+        "workerservice1",
+        "workerservice2",
+        "workerservice3"
+    ];
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

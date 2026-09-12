@@ -66,42 +66,69 @@
 
 <!-- Architecture overview -->
 <div class="card mb-4">
-    <div class="card-header fw-semibold">Tjänstarkitektur</div>
+    <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+        <span>Tjänstarkitektur &amp; tjänstehälsa</span>
+        <small class="text-muted">Hälsa auto-uppdateras var 5:e sekund</small>
+    </div>
     <div class="card-body">
         <div class="d-flex flex-wrap gap-2 align-items-center justify-content-center">
             <div class="text-center">
                 <div class="badge bg-primary fs-6 px-3 py-2">Web Frontend</div>
                 <div class="text-muted small mt-1">Blazor Server</div>
+                <div class="small mt-1">
+                    <span class="@GetArchitectureHealthBadgeClass("webfrontend")">@GetArchitectureHealthText("webfrontend")</span>
+                </div>
             </div>
             <span class="text-muted fs-4">↕</span>
             <div class="text-center">
                 <div class="badge bg-secondary fs-6 px-3 py-2">ApiService</div>
                 <div class="text-muted small mt-1">Weather &amp; Forecast</div>
+                <div class="small mt-1">
+                    <span class="@GetArchitectureHealthBadgeClass("apiservice")">@GetArchitectureHealthText("apiservice")</span>
+                </div>
             </div>
             <span class="text-muted fs-4">↔</span>
             <div class="text-center">
                 <div class="badge bg-secondary fs-6 px-3 py-2">ApiServiceForecast</div>
                 <div class="text-muted small mt-1">Forecast + queue</div>
+                <div class="small mt-1">
+                    <span class="@GetArchitectureHealthBadgeClass("apiserviceforecast")">@GetArchitectureHealthText("apiserviceforecast")</span>
+                </div>
             </div>
             <span class="text-muted fs-4">↔</span>
             <div class="text-center">
                 <div class="badge bg-info text-dark fs-6 px-3 py-2">WorkerService 1</div>
                 <div class="text-muted small mt-1">Job consumer</div>
+                <div class="small mt-1">
+                    <span class="@GetArchitectureHealthBadgeClass("workerservice1")">@GetArchitectureHealthText("workerservice1")</span>
+                </div>
             </div>
             <span class="text-muted fs-4">→</span>
             <div class="text-center">
                 <div class="badge bg-info text-dark fs-6 px-3 py-2">WorkerService 2</div>
                 <div class="text-muted small mt-1">Chain step 2</div>
+                <div class="small mt-1">
+                    <span class="@GetArchitectureHealthBadgeClass("workerservice2")">@GetArchitectureHealthText("workerservice2")</span>
+                </div>
             </div>
             <span class="text-muted fs-4">→</span>
             <div class="text-center">
                 <div class="badge bg-info text-dark fs-6 px-3 py-2">WorkerService 3</div>
                 <div class="text-muted small mt-1">Chain step 3</div>
+                <div class="small mt-1">
+                    <span class="@GetArchitectureHealthBadgeClass("workerservice3")">@GetArchitectureHealthText("workerservice3")</span>
+                </div>
             </div>
         </div>
         <p class="text-muted small text-center mt-2 mb-0">
-            WorkerService&nbsp;4 övervakar WS1–WS3 periodiskt. Alla tjänster skriver telemetri till StateStore-databasen.
+            WorkerService&nbsp;4 övervakar tjänsterna periodiskt via deras /health-endpoint. Alla tjänster skriver telemetri till StateStore-databasen.
         </p>
+        <div class="d-flex flex-wrap gap-2 justify-content-center mt-2">
+            <span class="badge bg-success">✅ OK</span>
+            <span class="badge bg-warning text-dark">⚠️ Varning</span>
+            <span class="badge bg-danger">❌ Error</span>
+            <span class="badge bg-secondary">ℹ️ Ej övervakad</span>
+        </div>
     </div>
 </div>
 
@@ -136,38 +163,6 @@
         else
         {
             <div class="text-muted"><span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Laddar statistik…</div>
-        }
-    </div>
-</div>
-
-<div class="card mt-4">
-    <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
-        <span>Tjänstehälsa (senaste per tjänst)</span>
-        <small class="text-muted">Auto-uppdateras var 5:e sekund</small>
-    </div>
-    <div class="card-body">
-        @if (_serviceHealth.Count == 0)
-        {
-            <div class="text-muted small">Inga hälsokontroller registrerade ännu.</div>
-        }
-        else
-        {
-            <div class="row g-2">
-                @foreach (var health in _serviceHealth)
-                {
-                    <div class="col-md-4 col-lg-3">
-                        <div class="border rounded p-2 h-100">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <strong class="small">@health.ServiceName</strong>
-                                <span class="@GetHealthBadgeClass(health.Status)" title="@health.Description">
-                                    @GetHealthEmoji(health.Status) @health.Status
-                                </span>
-                            </div>
-                            <div class="text-muted small mt-1">HTTP @health.HttpStatusCode • @health.CheckedAt.ToString("HH:mm:ss")</div>
-                        </div>
-                    </div>
-                }
-            </div>
         }
     </div>
 </div>
@@ -236,7 +231,7 @@
     private string _dbProviderDisplay = "SQL Server";
     private string _dbProviderDetail = "ConnectionStrings:statestoreSqlServer";
     private List<FlowRunOverview> _latestRuns = [];
-    private List<ServiceHealthOverview> _serviceHealth = [];
+    private Dictionary<string, ServiceHealthOverview> _serviceHealthByService = new(StringComparer.OrdinalIgnoreCase);
     private System.Threading.Timer? _refreshTimer;
 
     protected override async Task OnInitializedAsync()
@@ -306,10 +301,9 @@
                 .Take(2000)
                 .ToListAsync();
 
-            _serviceHealth = latestHealthChecks
+            _serviceHealthByService = latestHealthChecks
                 .GroupBy(h => h.ServiceName)
                 .Select(g => g.First())
-                .OrderBy(h => h.ServiceName)
                 .Select(h => new ServiceHealthOverview
                 {
                     ServiceName = h.ServiceName,
@@ -317,7 +311,7 @@
                     CheckedAt = h.CheckedAt,
                     HttpStatusCode = h.HttpStatusCode
                 })
-                .ToList();
+                .ToDictionary(h => h.ServiceName, StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception ex)
         {
@@ -359,6 +353,16 @@
         "Error" => "badge bg-danger",
         _ => "badge bg-secondary"
     };
+
+    private string GetArchitectureHealthText(string serviceName) =>
+        _serviceHealthByService.TryGetValue(serviceName, out var health)
+            ? $"{GetHealthEmoji(health.Status)} {health.Status}"
+            : "ℹ️ Ej övervakad";
+
+    private string GetArchitectureHealthBadgeClass(string serviceName) =>
+        _serviceHealthByService.TryGetValue(serviceName, out var health)
+            ? GetHealthBadgeClass(health.Status)
+            : "badge bg-secondary";
 
     private string GetDbProviderDetail(string provider)
     {

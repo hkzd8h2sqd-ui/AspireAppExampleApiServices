@@ -21,6 +21,18 @@ builder.Services.AddHttpClient("workerservice3", client =>
 {
     client.BaseAddress = new Uri("https+http://workerservice3");
 });
+builder.Services.AddHttpClient("apiservice", client =>
+{
+    client.BaseAddress = new Uri("https+http://apiservice");
+});
+builder.Services.AddHttpClient("apiserviceforecast", client =>
+{
+    client.BaseAddress = new Uri("https+http://apiserviceforecast");
+});
+builder.Services.AddHttpClient("webfrontend", client =>
+{
+    client.BaseAddress = new Uri("https+http://webfrontend");
+});
 
 builder.Services.AddConfiguredStateStoreDbContext(builder.Configuration);
 

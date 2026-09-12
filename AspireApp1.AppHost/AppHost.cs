@@ -96,12 +96,16 @@ workerService2.WithReference(workerService3).WaitFor(workerService3);
 var workerService4 = builder.AddProject<Projects.AspireApp1_WorkerService4>("workerservice4")
     .WithHttpHealthCheck("/health")
     .WithExternalHttpEndpoints()
+    .WithReference(apiService)
+    .WithReference(apiServiceForecast)
     .WithReference(workerService1)
     .WithReference(workerService2)
     .WithReference(workerService3)
     .WithEnvironment("StateStore__Provider", stateStoreProvider)
     .WithEnvironment("ConnectionStrings__statestore", sqliteConnStr)
     .WithEnvironment("ConnectionStrings__statestoreSqlServer", sqlServerConnStr)
+    .WaitFor(apiService)
+    .WaitFor(apiServiceForecast)
     .WaitFor(workerService1)
     .WaitFor(workerService2)
     .WaitFor(workerService3);
@@ -119,5 +123,6 @@ var webFrontend = builder.AddProject<Projects.AspireApp1_Web>("webfrontend")
 
 // The web frontend triggers flows via WorkerService1
 webFrontend.WithReference(workerService1);
+workerService4.WithReference(webFrontend).WaitFor(webFrontend);
 
 builder.Build().Run();
