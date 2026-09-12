@@ -3,8 +3,11 @@
 @implements IDisposable
 
 @using AspireApp1.Web.Models
+@using System.Net.Http.Json
+@using System.Text.Json
 @using System.Text.RegularExpressions
 @inject TraceQueryService TraceQuery
+@inject IHttpClientFactory HttpClientFactory
 @inject ILogger<ProcessFlow> Logger
 @inject NavigationManager NavigationManager
 @inject IJSRuntime JS
@@ -170,6 +173,33 @@ else if (currentTrace is not null)
         </div>
     }
 
+    @if (GetPrimaryFlowRunState(currentTrace) is FlowRunStateModel restartableFlow)
+    {
+        <div class="restart-panel mb-3">
+            <button class="btn btn-outline-danger btn-sm" @onclick="() => RestartFlowAsync(restartableFlow)" disabled="@_isRestarting">
+                @if (_isRestarting)
+                {
+                    <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                    <span>Återstartar…</span>
+                }
+                else
+                {
+                    <span class="bi bi-arrow-clockwise me-1" aria-hidden="true"></span>
+                    <span>Återstarta flöde</span>
+                }
+            </button>
+            <span class="text-muted small ms-2">Skapar en ny körning av samma flödestyp om en tidigare körning fastnat.</span>
+            @if (!string.IsNullOrWhiteSpace(_restartFeedback))
+            {
+                <div class="alert alert-success py-2 px-3 mt-2 mb-0">@_restartFeedback</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_restartError))
+            {
+                <div class="alert alert-danger py-2 px-3 mt-2 mb-0">@_restartError</div>
+            }
+        </div>
+    }
+
     <!-- View toggle + filters -->
     <div class="d-flex flex-wrap gap-3 align-items-center mb-3">
         <div class="btn-group" role="group" aria-label="Vyval">
@@ -251,6 +281,9 @@ else if (currentTrace is not null)
     private HashSet<string> highlightedSpanIds = [];
     private HashSet<string> openSpanDetailIds = [];
     private HashSet<string> collapsedSpanIds = [];
+    private bool _isRestarting;
+    private string? _restartFeedback;
+    private string? _restartError;
     private string? _copyFeedback;
     private System.Threading.Timer? _copyFeedbackTimer;
     private bool _initialParamSearchDone;
@@ -308,6 +341,8 @@ else if (currentTrace is not null)
         highlightedSpanIds = [];
         openSpanDetailIds = [];
         collapsedSpanIds = [];
+        _restartFeedback = null;
+        _restartError = null;
         currentTrace = null;
 
         if (string.IsNullOrWhiteSpace(searchInput))
@@ -403,6 +438,60 @@ else if (currentTrace is not null)
         searchType = recent.SearchType;
         searchInput = recent.Input;
         await SearchAsync();
+    }
+
+    private async Task RestartFlowAsync(FlowRunStateModel flow)
+    {
+        _isRestarting = true;
+        _restartFeedback = null;
+        _restartError = null;
+
+        try
+        {
+            var http = HttpClientFactory.CreateClient("webfrontend");
+            var response = await http.PostAsync($"/api/flow/{Uri.EscapeDataString(flow.FlowRunId)}/restart", content: null);
+            if (!response.IsSuccessStatusCode)
+            {
+                _restartError = $"Kunde inte återstarta flöde (HTTP {(int)response.StatusCode}).";
+                return;
+            }
+
+            using var doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
+            if (doc is null)
+            {
+                _restartError = "Ogiltigt svar vid återstart av flödet.";
+                return;
+            }
+
+            var root = doc.RootElement;
+            var newFlowRunId = root.TryGetProperty("flowRunId", out var flowRunIdElement) ? flowRunIdElement.GetString() : null;
+            var newTraceId = root.TryGetProperty("traceId", out var traceIdElement) ? traceIdElement.GetString() : null;
+            var newCorrelationId = root.TryGetProperty("correlationId", out var correlationIdElement) ? correlationIdElement.GetString() : null;
+
+            if (!string.IsNullOrWhiteSpace(newTraceId))
+            {
+                searchType = "traceId";
+                searchInput = newTraceId;
+                await SearchAsync();
+            }
+            else if (!string.IsNullOrWhiteSpace(newCorrelationId))
+            {
+                searchType = "correlationId";
+                searchInput = newCorrelationId;
+                await SearchAsync();
+            }
+
+            _restartFeedback = $"Ny körning startad{(string.IsNullOrWhiteSpace(newFlowRunId) ? "." : $": {newFlowRunId}")}";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Kunde inte återstarta flöde. flowRunId={FlowRunId}", flow.FlowRunId);
+            _restartError = "Återstart misslyckades. Försök igen.";
+        }
+        finally
+        {
+            _isRestarting = false;
+        }
     }
 
     private async Task CopyToClipboardAsync(string text)
