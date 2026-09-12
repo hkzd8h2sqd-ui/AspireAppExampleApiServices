@@ -10,7 +10,7 @@
 <PageTitle>Alla körningar</PageTitle>
 
 <h1>Alla körningar</h1>
-<p class="text-muted">Visar senaste 100 flödeskörningar. Auto-uppdateras var 5:e sekund.</p>
+<p class="text-muted">Visar senaste 100 flödeskörningar. Klicka på en körning för att öppna detaljer med tydligt stegflöde.</p>
 
 @if (!_loaded)
 {
@@ -22,48 +22,103 @@ else if (_runs.Count == 0)
 }
 else
 {
-    <div class="table-responsive">
-        <table class="table table-sm table-striped align-middle">
-            <thead class="table-light">
-                <tr>
-                    <th>Start</th>
-                    <th>Flöde</th>
-                    <th>Status</th>
-                    <th>Steg</th>
-                    <th>Tjänst</th>
-                    <th>Spåra</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var run in _runs)
-                {
-                    <tr>
-                        <td class="small">@run.StartedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
-                        <td class="small">@run.FlowName</td>
-                        <td><span class="badge @GetStatusBadge(run.Status)">@run.Status</span></td>
-                        <td class="small">Steg @run.CurrentStep/@run.TotalSteps</td>
-                        <td class="small">@run.CurrentService</td>
-                        <td class="small">
+    <div class="flow-runs-summary mb-3">
+        <span class="badge bg-primary">Pågår: @_runningCount</span>
+        <span class="badge bg-success">Klar: @_completedCount</span>
+        <span class="badge bg-danger">Fel: @_failedCount</span>
+        <span class="badge bg-secondary">Väntar: @_waitingCount</span>
+    </div>
+
+    <div class="flow-runs-list">
+        @foreach (var run in _runs)
+        {
+            var expanded = IsExpanded(run.FlowRunId);
+            <section class="flow-run-card @GetRunBorderClass(run.Status)">
+                <button class="flow-run-header" type="button" @onclick="() => ToggleExpand(run.FlowRunId)" aria-expanded="@expanded">
+                    <div class="flow-run-header-main">
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <span class="badge @GetStatusBadge(run.Status)">@run.Status</span>
+                            <strong>@run.FlowName</strong>
+                            <span class="text-muted small">Start: @run.StartedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                        </div>
+                        <div class="flow-run-meta">
+                            <span><strong>Steg:</strong> @run.CurrentStep/@run.TotalSteps</span>
+                            <span><strong>Tjänst:</strong> @run.CurrentService</span>
+                            <span><strong>Varaktighet:</strong> @GetDurationText(run)</span>
+                        </div>
+                    </div>
+                    <span class="flow-run-toggle @(expanded ? "open" : string.Empty)">
+                        @(expanded ? "Stäng detaljer ▲" : "Öppna detaljer ▼")
+                    </span>
+                </button>
+
+                <div class="progress flow-run-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@Math.Max(run.TotalSteps, 1)" aria-valuenow="@run.CurrentStep">
+                    <div class="progress-bar @GetProgressClass(run.Status)"
+                         style="width:@GetProgressPercent(run).ToString("F0", System.Globalization.CultureInfo.InvariantCulture)%">
+                    </div>
+                </div>
+
+                <div class="flow-run-details @(expanded ? "open" : string.Empty)">
+                    <div class="flow-run-details-grid">
+                        <div>
+                            <div class="text-muted small mb-1">FlowRunId</div>
+                            <code class="small">@run.FlowRunId</code>
+                        </div>
+                        <div>
+                            <div class="text-muted small mb-1">TraceId</div>
+                            <code class="small">@(string.IsNullOrWhiteSpace(run.TraceId) ? "saknas" : run.TraceId)</code>
+                        </div>
+                        <div>
+                            <div class="text-muted small mb-1">CorrelationId</div>
+                            <code class="small">@run.CorrelationId</code>
+                        </div>
+                        <div class="d-flex gap-2 flex-wrap align-items-end justify-content-start">
                             @if (!string.IsNullOrWhiteSpace(run.TraceId))
                             {
-                                <a class="btn btn-outline-primary btn-sm py-0 px-2" href="/processflow?traceId=@Uri.EscapeDataString(run.TraceId)">Trace</a>
+                                <a class="btn btn-outline-primary btn-sm" href="/processflow?traceId=@Uri.EscapeDataString(run.TraceId)">Öppna via TraceId</a>
                             }
-                            else if (!string.IsNullOrWhiteSpace(run.CorrelationId))
+                            @if (!string.IsNullOrWhiteSpace(run.CorrelationId))
                             {
-                                <a class="btn btn-outline-secondary btn-sm py-0 px-2" href="/processflow?correlationId=@Uri.EscapeDataString(run.CorrelationId)">Corr</a>
+                                <a class="btn btn-outline-secondary btn-sm" href="/processflow?correlationId=@Uri.EscapeDataString(run.CorrelationId)">Öppna via CorrelationId</a>
                             }
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+                        </div>
+                    </div>
+
+                    <div class="flow-run-timeline">
+                        @foreach (var step in run.Steps)
+                        {
+                            <div class="timeline-step">
+                                <div class="timeline-step-header">
+                                    <span class="badge text-bg-light border">Steg @step.StepOrder</span>
+                                    <strong>@step.StepName</strong>
+                                    <span class="badge @GetStepStatusBadge(step.Status)">@GetStepStatusText(step.Status)</span>
+                                </div>
+                                <div class="timeline-step-meta">
+                                    <span><strong>Tjänst:</strong> @step.ServiceName</span>
+                                    <span><strong>Tid:</strong> @GetStepTimeRangeText(step)</span>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(step.ErrorMessage))
+                                {
+                                    <div class="timeline-step-error">@step.ErrorMessage</div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            </section>
+        }
     </div>
 }
 
 @code {
     private bool _loaded;
     private bool _isDisposed;
+    private int _runningCount;
+    private int _completedCount;
+    private int _failedCount;
+    private int _waitingCount;
     private List<FlowRunListItem> _runs = [];
+    private HashSet<string> _expandedRuns = new(StringComparer.OrdinalIgnoreCase);
     private System.Threading.Timer? _refreshTimer;
 
     protected override async Task OnInitializedAsync()
@@ -97,18 +152,42 @@ else
             _runs = flowRuns.Select(run =>
             {
                 var state = FlowRunStateCalculator.Build(run, steps);
+                var stepItems = steps
+                    .Where(s => s.FlowRunId == run.FlowRunId)
+                    .OrderBy(s => s.StepOrder)
+                    .Select(s => new FlowStepListItem
+                    {
+                        StepOrder = s.StepOrder,
+                        StepName = s.StepName,
+                        ServiceName = s.ServiceName,
+                        Status = s.Status.ToString(),
+                        StartedAt = s.StartedAt,
+                        CompletedAt = s.CompletedAt,
+                        ErrorMessage = s.ErrorMessage
+                    })
+                    .ToList();
+
                 return new FlowRunListItem
                 {
+                    FlowRunId = run.FlowRunId,
                     FlowName = run.FlowName,
                     StartedAt = run.StartedAt,
+                    CompletedAt = run.CompletedAt,
                     Status = state.Status,
                     CurrentStep = state.CurrentStep,
                     TotalSteps = state.TotalSteps,
                     CurrentService = state.CurrentService ?? "okänd",
                     TraceId = run.TraceId,
-                    CorrelationId = run.CorrelationId
+                    CorrelationId = run.CorrelationId,
+                    Steps = stepItems
                 };
             }).ToList();
+
+            _runningCount = _runs.Count(r => r.Status == "Pågår");
+            _completedCount = _runs.Count(r => r.Status == "Klar");
+            _failedCount = _runs.Count(r => r.Status == "Fel");
+            _waitingCount = _runs.Count(r => r.Status == "Väntar");
+            _expandedRuns.IntersectWith(_runs.Select(r => r.FlowRunId));
         }
         catch (Exception ex)
         {
@@ -122,6 +201,16 @@ else
         }
     }
 
+    private bool IsExpanded(string flowRunId) => _expandedRuns.Contains(flowRunId);
+
+    private void ToggleExpand(string flowRunId)
+    {
+        if (!_expandedRuns.Add(flowRunId))
+        {
+            _expandedRuns.Remove(flowRunId);
+        }
+    }
+
     private static string GetStatusBadge(string status) => status switch
     {
         "Klar" => "bg-success",
@@ -131,6 +220,79 @@ else
         _ => "bg-secondary"
     };
 
+    private static string GetRunBorderClass(string status) => status switch
+    {
+        "Klar" => "run-completed",
+        "Fel" => "run-failed",
+        "Pågår" => "run-running",
+        "Väntar" => "run-waiting",
+        _ => "run-waiting"
+    };
+
+    private static string GetProgressClass(string status) => status switch
+    {
+        "Klar" => "bg-success",
+        "Fel" => "bg-danger",
+        "Pågår" => "bg-primary progress-bar-striped progress-bar-animated",
+        "Väntar" => "bg-secondary",
+        _ => "bg-secondary"
+    };
+
+    private static double GetProgressPercent(FlowRunListItem run)
+    {
+        if (run.TotalSteps <= 0)
+        {
+            return 0;
+        }
+
+        var ratio = (double)run.CurrentStep / run.TotalSteps;
+        return Math.Clamp(ratio * 100, 0, 100);
+    }
+
+    private static string GetDurationText(FlowRunListItem run)
+    {
+        var end = run.CompletedAt ?? DateTimeOffset.UtcNow;
+        var duration = end - run.StartedAt;
+        if (duration.TotalSeconds < 1)
+        {
+            return $"{duration.TotalMilliseconds:F0} ms";
+        }
+
+        if (duration.TotalMinutes < 1)
+        {
+            return $"{duration.TotalSeconds:F1} s";
+        }
+
+        return $"{duration.TotalMinutes:F1} min";
+    }
+
+    private static string GetStepStatusText(string status) => status switch
+    {
+        "Pending" => "Väntar",
+        "Running" => "Pågår",
+        "Retrying" => "Försök igen",
+        "Completed" => "Klar",
+        "Failed" => "Fel",
+        _ => status
+    };
+
+    private static string GetStepStatusBadge(string status) => status switch
+    {
+        "Pending" => "bg-secondary",
+        "Running" => "bg-primary",
+        "Retrying" => "bg-warning text-dark",
+        "Completed" => "bg-success",
+        "Failed" => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    private static string GetStepTimeRangeText(FlowStepListItem step)
+    {
+        var start = step.StartedAt?.ToString("HH:mm:ss") ?? "ej startad";
+        var end = step.CompletedAt?.ToString("HH:mm:ss") ?? "pågår";
+        return $"{start} → {end}";
+    }
+
     public void Dispose()
     {
         _isDisposed = true;
@@ -139,13 +301,27 @@ else
 
     private sealed class FlowRunListItem
     {
+        public string FlowRunId { get; init; } = string.Empty;
         public string FlowName { get; init; } = string.Empty;
         public DateTimeOffset StartedAt { get; init; }
+        public DateTimeOffset? CompletedAt { get; init; }
         public string Status { get; init; } = string.Empty;
         public int CurrentStep { get; init; }
         public int TotalSteps { get; init; }
         public string CurrentService { get; init; } = string.Empty;
         public string? TraceId { get; init; }
-        public string? CorrelationId { get; init; }
+        public string CorrelationId { get; init; } = string.Empty;
+        public List<FlowStepListItem> Steps { get; init; } = [];
+    }
+
+    private sealed class FlowStepListItem
+    {
+        public int StepOrder { get; init; }
+        public string StepName { get; init; } = string.Empty;
+        public string ServiceName { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public DateTimeOffset? StartedAt { get; init; }
+        public DateTimeOffset? CompletedAt { get; init; }
+        public string? ErrorMessage { get; init; }
     }
 }

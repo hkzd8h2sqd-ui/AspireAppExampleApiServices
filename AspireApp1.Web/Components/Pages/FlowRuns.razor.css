@@ -1,0 +1,123 @@
+.flow-runs-summary {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.flow-runs-list {
+    display: grid;
+    gap: 0.85rem;
+}
+
+.flow-run-card {
+    border: 1px solid var(--bs-border-color);
+    border-left-width: 6px;
+    border-radius: 0.75rem;
+    background: var(--bs-body-bg);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.flow-run-card.run-running { border-left-color: var(--bs-primary); }
+.flow-run-card.run-completed { border-left-color: var(--bs-success); }
+.flow-run-card.run-failed { border-left-color: var(--bs-danger); }
+.flow-run-card.run-waiting { border-left-color: var(--bs-secondary); }
+
+.flow-run-header {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 0.9rem 1rem 0.6rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    text-align: left;
+    cursor: pointer;
+}
+
+.flow-run-header:hover {
+    background: rgba(13, 110, 253, 0.06);
+}
+
+.flow-run-header-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.flow-run-meta {
+    display: flex;
+    gap: 0.9rem;
+    flex-wrap: wrap;
+    margin-top: 0.35rem;
+    font-size: 0.9rem;
+    color: var(--bs-secondary-color);
+}
+
+.flow-run-toggle {
+    font-size: 0.85rem;
+    color: var(--bs-primary);
+    white-space: nowrap;
+    font-weight: 600;
+    margin-top: 0.2rem;
+}
+
+.flow-run-progress {
+    height: 0.4rem;
+    margin: 0 1rem;
+}
+
+.flow-run-details {
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height 220ms ease, opacity 180ms ease, padding 180ms ease;
+    padding: 0 1rem;
+}
+
+.flow-run-details.open {
+    max-height: 60rem;
+    opacity: 1;
+    padding: 0.75rem 1rem 1rem;
+}
+
+.flow-run-details-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 0.8rem;
+    align-items: start;
+    margin-bottom: 0.8rem;
+}
+
+.flow-run-timeline {
+    display: grid;
+    gap: 0.55rem;
+}
+
+.timeline-step {
+    border: 1px solid var(--bs-border-color-translucent);
+    border-radius: 0.55rem;
+    padding: 0.6rem 0.7rem;
+    background: rgba(13, 110, 253, 0.05);
+}
+
+.timeline-step-header {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.timeline-step-meta {
+    margin-top: 0.25rem;
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    font-size: 0.85rem;
+    color: var(--bs-secondary-color);
+}
+
+.timeline-step-error {
+    margin-top: 0.35rem;
+    color: var(--bs-danger);
+    font-size: 0.86rem;
+}
