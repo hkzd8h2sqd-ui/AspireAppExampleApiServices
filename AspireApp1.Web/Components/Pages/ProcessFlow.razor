@@ -217,64 +217,6 @@ else if (currentTrace is not null)
     }
 }
 
-<!-- Detail panel -->
-@if (selectedSpan is not null)
-{
-    <div class="detail-panel mt-4 p-3 border rounded">
-        <div class="d-flex justify-content-between align-items-start mb-2">
-            <h5 class="mb-0">Detaljer: @selectedSpan.OperationName</h5>
-            <button type="button" class="btn-close" @onclick="CloseDetail" aria-label="Stäng"></button>
-        </div>
-        <dl class="row mb-0">
-            <dt class="col-sm-3">SpanId</dt>
-            <dd class="col-sm-9"><code>@selectedSpan.SpanId</code></dd>
-            <dt class="col-sm-3">ParentSpanId</dt>
-            <dd class="col-sm-9"><code>@(selectedSpan.ParentSpanId ?? "–")</code></dd>
-            <dt class="col-sm-3">Tjänst</dt>
-            <dd class="col-sm-9">@selectedSpan.ServiceName</dd>
-            <dt class="col-sm-3">Status</dt>
-            <dd class="col-sm-9">@GetStatusEmoji(selectedSpan.Status) @selectedSpan.Status</dd>
-            <dt class="col-sm-3">Starttid</dt>
-            <dd class="col-sm-9">@selectedSpan.StartTime.ToString("yyyy-MM-dd HH:mm:ss.fff zzz")</dd>
-            <dt class="col-sm-3">Varaktighet</dt>
-            <dd class="col-sm-9">@(selectedSpan.Duration.HasValue ? $"{selectedSpan.Duration.Value.TotalMilliseconds:F1} ms" : "–")</dd>
-            @if (selectedSpan.HttpStatusCode.HasValue)
-            {
-                <dt class="col-sm-3">HTTP-status</dt>
-                <dd class="col-sm-9">@selectedSpan.HttpStatusCode</dd>
-            }
-            @if (!string.IsNullOrEmpty(selectedSpan.ErrorMessage))
-            {
-                <dt class="col-sm-3">Felmeddelande</dt>
-                <dd class="col-sm-9 text-danger">@selectedSpan.ErrorMessage</dd>
-            }
-        </dl>
-        @if (selectedSpan.LogEntries.Count > 0)
-        {
-            <h6 class="mt-3">Loggposter</h6>
-            <div class="log-entries">
-                @foreach (var log in selectedSpan.LogEntries)
-                {
-                    <div class="log-entry @GetLogLevelClass(log.Level) mb-1 p-1 rounded small">
-                        <span class="fw-semibold me-1">[@log.Timestamp.ToString("HH:mm:ss.fff")]</span>
-                        <span class="badge @GetLogBadgeClass(log.Level) me-1">@log.Level</span>
-                        @log.Message
-                        @if (log.Attributes.Count > 0)
-                        {
-                            <div class="mt-1 ms-2 text-muted">
-                                @foreach (var attr in log.Attributes)
-                                {
-                                    <span class="me-2"><strong>@attr.Key</strong>=@attr.Value</span>
-                                }
-                            </div>
-                        }
-                    </div>
-                }
-            </div>
-        }
-    </div>
-}
-
 @code {
     [SupplyParameterFromQuery(Name = "traceId")] private string? QueryTraceId { get; set; }
     [SupplyParameterFromQuery(Name = "correlationId")] private string? QueryCorrelationId { get; set; }
@@ -292,6 +234,7 @@ else if (currentTrace is not null)
     private SpanModel? selectedSpan;
     private string? highlightSpanId;
     private HashSet<string> highlightedSpanIds = [];
+    private HashSet<string> collapsedSpanIds = [];
     private string? _copyFeedback;
     private System.Threading.Timer? _copyFeedbackTimer;
     private bool _initialParamSearchDone;
@@ -347,6 +290,7 @@ else if (currentTrace is not null)
         selectedSpan = null;
         highlightSpanId = null;
         highlightedSpanIds = [];
+        collapsedSpanIds = [];
         currentTrace = null;
 
         if (string.IsNullOrWhiteSpace(searchInput))
@@ -512,7 +456,13 @@ else if (currentTrace is not null)
         selectedSpan = selectedSpan?.SpanId == span.SpanId ? null : span;
     }
 
-    private void CloseDetail() => selectedSpan = null;
+    private void ToggleChildren(SpanModel span)
+    {
+        if (!collapsedSpanIds.Add(span.SpanId))
+        {
+            collapsedSpanIds.Remove(span.SpanId);
+        }
+    }
 
     private static (string cssClass, string text) GetOverallStatusBadge(TraceModel trace)
     {
@@ -601,30 +551,83 @@ else if (currentTrace is not null)
     private RenderFragment RenderSpanTree(SpanModel span, List<SpanModel> allSpans, int depth) => __builder =>
     {
         var children = allSpans.Where(s => s.ParentSpanId == span.SpanId).OrderBy(s => s.StartTime).ToList();
+        var hasChildren = children.Count > 0;
+        var isCollapsed = collapsedSpanIds.Contains(span.SpanId);
+        var isDetailsOpen = selectedSpan?.SpanId == span.SpanId;
         var isHighlighted = highlightedSpanIds.Contains(span.SpanId.ToLowerInvariant());
         var rowClass = isHighlighted ? "table-primary" : GetStatusRowClass(span.Status);
-        var durationMs = span.Duration.HasValue ? $"{span.Duration.Value.TotalMilliseconds:F1} ms" : "–";
+        var durationText = FormatDurationSeconds(span.Duration);
 
-        <div class="span-row @rowClass mb-1 p-2 border rounded" style="margin-left: @(depth * 1.5)rem;">
-            <div class="d-flex align-items-center gap-2 flex-wrap">
+        <div class="span-row @rowClass mb-1 p-2 border rounded span-row-enhanced @(isDetailsOpen ? "span-row-open" : string.Empty)" style="margin-left: @(depth * 1.5)rem;">
+            <div class="d-flex align-items-center gap-2 flex-wrap span-row-header">
                 <span>@GetStatusEmoji(span.Status)</span>
                 <strong>@span.ServiceName</strong>
                 <span class="text-muted">›</span>
                 <span>@span.OperationName</span>
-                <small class="text-muted ms-auto">@span.StartTime.ToString("HH:mm:ss.fff") | @durationMs</small>
-                <button class="btn btn-sm btn-outline-secondary py-0 px-1" @onclick="() => SelectSpan(span)" title="Visa detaljer">
-                    @(selectedSpan?.SpanId == span.SpanId ? "▲" : "▼")
+                <small class="text-muted ms-auto">@span.StartTime.ToString("HH:mm:ss.fff") | @durationText</small>
+                @if (hasChildren)
+                {
+                    <button class="btn btn-sm btn-outline-primary py-0 px-2" @onclick="() => ToggleChildren(span)" title="Visa/dölj underliggande spans">
+                        @(isCollapsed ? $"▶ {children.Count}" : $"▼ {children.Count}")
+                    </button>
+                }
+                <button class="btn btn-sm @(isDetailsOpen ? "btn-primary" : "btn-outline-secondary") py-0 px-2" @onclick="() => SelectSpan(span)" title="Visa/dölj detaljer">
+                    @(isDetailsOpen ? "Dölj detaljer" : "Visa detaljer")
                 </button>
             </div>
             @if (!string.IsNullOrEmpty(span.ErrorMessage))
             {
                 <div class="text-danger small mt-1">@span.ErrorMessage</div>
             }
+
+            <div class="span-inline-details @(isDetailsOpen ? "open" : string.Empty)">
+                @if (isDetailsOpen)
+                {
+                    <dl class="row mb-0 mt-2 small">
+                        <dt class="col-sm-2">SpanId</dt>
+                        <dd class="col-sm-10"><code>@span.SpanId</code></dd>
+                        <dt class="col-sm-2">Parent</dt>
+                        <dd class="col-sm-10"><code>@(span.ParentSpanId ?? "–")</code></dd>
+                        <dt class="col-sm-2">Starttid</dt>
+                        <dd class="col-sm-10">@span.StartTime.ToString("yyyy-MM-dd HH:mm:ss.fff zzz")</dd>
+                        <dt class="col-sm-2">Varaktighet</dt>
+                        <dd class="col-sm-10">@durationText</dd>
+                        @if (span.HttpStatusCode.HasValue)
+                        {
+                            <dt class="col-sm-2">HTTP</dt>
+                            <dd class="col-sm-10">@span.HttpStatusCode</dd>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(span.ErrorMessage))
+                        {
+                            <dt class="col-sm-2">Fel</dt>
+                            <dd class="col-sm-10 text-danger">@span.ErrorMessage</dd>
+                        }
+                    </dl>
+
+                    @if (span.LogEntries.Count > 0)
+                    {
+                        <div class="small mt-2">
+                            <strong>Loggposter:</strong>
+                            @foreach (var log in span.LogEntries)
+                            {
+                                <div class="log-entry @GetLogLevelClass(log.Level) mt-1 p-1 rounded small">
+                                    <span class="fw-semibold me-1">[@log.Timestamp.ToString("HH:mm:ss.fff")]</span>
+                                    <span class="badge @GetLogBadgeClass(log.Level) me-1">@log.Level</span>
+                                    @log.Message
+                                </div>
+                            }
+                        </div>
+                    }
+                }
+            </div>
         </div>
 
-        @foreach (var child in children)
+        @if (!isCollapsed)
         {
-            @RenderSpanTree(child, allSpans, depth + 1)
+            @foreach (var child in children)
+            {
+                @RenderSpanTree(child, allSpans, depth + 1)
+            }
         }
     };
 
@@ -645,13 +648,14 @@ else if (currentTrace is not null)
         {
             totalMs = 1;
         }
+        var totalSeconds = totalMs / 1000d;
 
         <div class="gantt-container" style="overflow-x: auto;">
             <table class="table table-sm table-bordered mb-0">
                 <thead>
                     <tr>
                         <th style="min-width:200px;">Tjänst / Operation</th>
-                        <th>Tidslinje (@totalMs.ToString("F0") ms totalt)</th>
+                        <th>Tidslinje (@totalSeconds.ToString("F2") sek totalt)</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -679,7 +683,7 @@ else if (currentTrace is not null)
                             </td>
                             <td style="position:relative; min-width:300px; height:2.5rem; padding:0;">
                                 <div style="position:absolute; left:@(offsetPct.ToString("F2", System.Globalization.CultureInfo.InvariantCulture))%; width:@(widthPct.ToString("F2", System.Globalization.CultureInfo.InvariantCulture))%; top:25%; height:50%; border-radius:3px;"
-                                     class="@barClass" title="@(span.Duration.HasValue ? $"{span.Duration.Value.TotalMilliseconds:F1} ms" : "okänd varaktighet")">
+                                     class="@barClass" title="@(span.Duration.HasValue ? $"{span.Duration.Value.TotalSeconds:F2} sek" : "okänd varaktighet")">
                                 </div>
                             </td>
                         </tr>
@@ -688,6 +692,9 @@ else if (currentTrace is not null)
             </table>
         </div>
     };
+
+    private static string FormatDurationSeconds(TimeSpan? duration) =>
+        duration.HasValue ? $"{duration.Value.TotalSeconds:F2} sek" : "–";
 
     private static readonly Regex SpanIdRegex = new(@"^[0-9a-fA-F]{16}$", RegexOptions.Compiled);
 }

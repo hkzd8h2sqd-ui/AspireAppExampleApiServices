@@ -1,0 +1,29 @@
+.span-row-enhanced {
+    transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+
+.span-row-enhanced:hover {
+    border-color: rgba(13, 110, 253, 0.35) !important;
+    background-color: rgba(13, 110, 253, 0.04);
+}
+
+.span-row-open {
+    border-color: rgba(13, 110, 253, 0.65) !important;
+    box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.14);
+}
+
+.span-row-header {
+    min-height: 2rem;
+}
+
+.span-inline-details {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition: max-height 220ms ease, opacity 200ms ease;
+}
+
+.span-inline-details.open {
+    max-height: 26rem;
+    opacity: 1;
+}
