@@ -8,13 +8,13 @@ namespace AspireApp1.Tests;
 public class StateStoreDbRegistrationTests
 {
     [TestMethod]
-    public void ResolveProvider_DefaultsToSqlite()
+    public void ResolveProvider_DefaultsToSqlServer()
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection().Build();
 
         var provider = StateStoreDbRegistration.ResolveProvider(configuration);
 
-        Assert.AreEqual("sqlite", provider);
+        Assert.AreEqual("sqlserver", provider);
     }
 
     [TestMethod]
@@ -33,6 +33,21 @@ public class StateStoreDbRegistrationTests
 
         StringAssert.Contains(connectionString, "Server=.");
         StringAssert.Contains(connectionString, "Database=AspireApp1StateStore");
+    }
+
+    [TestMethod]
+    public void ResolveProvider_UsesSqliteWhenConfigured()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["StateStore:Provider"] = "Sqlite"
+            })
+            .Build();
+
+        var provider = StateStoreDbRegistration.ResolveProvider(configuration);
+
+        Assert.AreEqual("sqlite", provider);
     }
 
     [TestMethod]
@@ -55,6 +70,7 @@ public class StateStoreDbRegistrationTests
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<StateStoreDbContext>();
 
+        await DatabaseInitializer.EnsureSchemaAsync(db);
         await DatabaseInitializer.EnsureSchemaAsync(db);
 
         Assert.IsTrue(File.Exists(dbPath));

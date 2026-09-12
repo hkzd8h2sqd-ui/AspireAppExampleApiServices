@@ -37,7 +37,12 @@ public static class StateStoreDbRegistration
             return SqlServerProvider;
         }
 
-        return SqliteProvider;
+        if (string.Equals(provider, "Sqlite", StringComparison.OrdinalIgnoreCase))
+        {
+            return SqliteProvider;
+        }
+
+        return SqlServerProvider;
     }
 
     public static string ResolveConnectionString(IConfiguration configuration, string provider)

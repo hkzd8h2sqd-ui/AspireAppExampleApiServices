@@ -1,5 +1,6 @@
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
+﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
+using System.Data;
 
 namespace AspireApp1.StateStore;
 
@@ -62,7 +63,9 @@ public static class DatabaseInitializer
                 "CompletedAt"  TEXT,
                 "ErrorMessage" TEXT,
                 "TraceId"      TEXT,
-                "SpanId"       TEXT
+                "SpanId"       TEXT,
+                "RetryAttempt" INTEGER NOT NULL DEFAULT 0,
+                "MaxRetries"   INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS "IX_FlowStepRecords_FlowRunId"
                 ON "FlowStepRecords" ("FlowRunId");
@@ -87,32 +90,95 @@ public static class DatabaseInitializer
                 ON "SpanRecords" ("TraceId");
             """, cancellationToken);
 
-        // Schema evolution: add RetryAttempt and MaxRetries columns to FlowStepRecords
-        // Hard-coded DDL statements (not parameterizable, and identifiers are not user-provided)
-        try
+        await AddColumnIfMissingAsync(
+            db,
+            tableName: "FlowStepRecords",
+            columnName: "RetryAttempt",
+            alterSql: "ALTER TABLE \"FlowStepRecords\" ADD COLUMN \"RetryAttempt\" INTEGER NOT NULL DEFAULT 0;",
+            cancellationToken);
+
+        await AddColumnIfMissingAsync(
+            db,
+            tableName: "FlowStepRecords",
+            columnName: "MaxRetries",
+            alterSql: "ALTER TABLE \"FlowStepRecords\" ADD COLUMN \"MaxRetries\" INTEGER NOT NULL DEFAULT 0;",
+            cancellationToken);
+    }
+
+    private static async Task AddColumnIfMissingAsync(
+        StateStoreDbContext db,
+        string tableName,
+        string columnName,
+        string alterSql,
+        CancellationToken cancellationToken)
+    {
+        if (await ColumnExistsAsync(db, tableName, columnName, cancellationToken))
         {
-            await db.Database.ExecuteSqlRawAsync(
-                "ALTER TABLE \"FlowStepRecords\" ADD COLUMN \"RetryAttempt\" INTEGER NOT NULL DEFAULT 0;",
-                cancellationToken);
+            return;
         }
-        catch (Exception ex) when (ex.InnerException?.Message.Contains("duplicate column") == true || 
-                                   ex.Message.Contains("duplicate column") ||
-                                   ex.Message.Contains("already exists"))
+
+        const int maxAttempts = 5;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            // Column already exists — safe to ignore
+            try
+            {
+                await db.Database.ExecuteSqlRawAsync(alterSql, cancellationToken);
+                return;
+            }
+            catch (SqliteException ex) when (
+                ex.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+            catch (SqliteException ex) when (
+                ex.SqliteErrorCode == 5 || // SQLITE_BUSY
+                ex.SqliteErrorCode == 6)   // SQLITE_LOCKED
+            {
+                if (attempt == maxAttempts)
+                {
+                    throw;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt), cancellationToken);
+            }
+        }
+    }
+
+    private static async Task<bool> ColumnExistsAsync(
+        StateStoreDbContext db,
+        string tableName,
+        string columnName,
+        CancellationToken cancellationToken)
+    {
+        var connection = db.Database.GetDbConnection();
+        var openedHere = connection.State != ConnectionState.Open;
+        if (openedHere)
+        {
+            await connection.OpenAsync(cancellationToken);
         }
 
         try
         {
-            await db.Database.ExecuteSqlRawAsync(
-                "ALTER TABLE \"FlowStepRecords\" ADD COLUMN \"MaxRetries\" INTEGER NOT NULL DEFAULT 0;",
-                cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"PRAGMA table_info(\"{tableName}\");";
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                if (string.Equals(reader["name"]?.ToString(), columnName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
-        catch (Exception ex) when (ex.InnerException?.Message.Contains("duplicate column") == true || 
-                                   ex.Message.Contains("duplicate column") ||
-                                   ex.Message.Contains("already exists"))
+        finally
         {
-            // Column already exists — safe to ignore
+            if (openedHere)
+            {
+                await connection.CloseAsync();
+            }
         }
     }
 }

@@ -40,7 +40,7 @@ StateStore kan köras med både SQLite och SQL Server via konfiguration i `Aspir
 ```json
 {
   "StateStore": {
-    "Provider": "Sqlite"
+    "Provider": "SqlServer"
   },
   "ConnectionStrings": {
     "statestoreSqlServer": "Server=.;Database=AspireApp1StateStore;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True"
@@ -48,8 +48,9 @@ StateStore kan köras med både SQLite och SQL Server via konfiguration i `Aspir
 }
 ```
 
-- `Provider = "Sqlite"` använder delad fil i LocalApplicationData (sätts i AppHost om `ConnectionStrings:statestore` saknas)
+- **Default är `Provider = "SqlServer"`**
 - `Provider = "SqlServer"` använder `ConnectionStrings:statestoreSqlServer`
+- `Provider = "Sqlite"` använder delad fil i LocalApplicationData (sätts i AppHost om `ConnectionStrings:statestore` saknas)
 - AppHost skickar alltid båda nycklarna till tjänsterna:
   - `ConnectionStrings:statestore` = SQLite-anslutning
   - `ConnectionStrings:statestoreSqlServer` = SQL Server-anslutning

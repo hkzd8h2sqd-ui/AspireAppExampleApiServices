@@ -2,10 +2,9 @@
 
 var builder = DistributedApplication.CreateBuilder(args);
 
-var stateStoreProvider = builder.Configuration["StateStore:Provider"] ?? "Sqlite";
+var stateStoreProvider = builder.Configuration["StateStore:Provider"] ?? "SqlServer";
 
-// SQLite state store — shared file written to LocalApplicationData so it persists across restarts
-// without requiring Docker or any database server.
+// SQLite state store fallback file used only when Provider=Sqlite.
 var dbDir = Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
     "AspireApp1");
