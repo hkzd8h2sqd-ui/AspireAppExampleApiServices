@@ -32,3 +32,24 @@ För krav, specifikation och implementationsplan gällande frontend-visualiserin
 
 - [Kravspecifikation: Frontend-visualisering av processflöde](docs/kravspecifikation-frontend-processflode.md)
 - [Implementationsplan: Frontend-visualisering av processflöde](docs/implementationsplan-frontend-processflode.md)
+
+## StateStore databas (SQLite eller SQL Server)
+
+StateStore kan köras med både SQLite och SQL Server via konfiguration i `appsettings.Development.json`.
+
+```json
+{
+  "StateStore": {
+    "Provider": "Sqlite"
+  },
+  "ConnectionStrings": {
+    "statestore": "Data Source=/tmp/AspireApp1StateStore/statestore.db",
+    "statestoreSqlServer": "Server=.;Database=AspireApp1StateStore;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True"
+  }
+}
+```
+
+- `Provider = "Sqlite"` använder `ConnectionStrings:statestore`
+- `Provider = "SqlServer"` använder `ConnectionStrings:statestoreSqlServer`
+
+Sidan `/flowruns` visar alla senaste flödeskörningar och länkar vidare till `/processflow`.

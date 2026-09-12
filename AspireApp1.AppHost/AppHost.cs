@@ -1,4 +1,9 @@
-﻿var builder = DistributedApplication.CreateBuilder(args);
+﻿using Microsoft.Extensions.Configuration;
+
+var builder = DistributedApplication.CreateBuilder(args);
+
+var stateStoreProvider = builder.Configuration["StateStore:Provider"] ?? "Sqlite";
+var useSqlServerStateStore = string.Equals(stateStoreProvider, "SqlServer", StringComparison.OrdinalIgnoreCase);
 
 // SQLite state store — shared file written to LocalApplicationData so it persists across restarts
 // without requiring Docker or any database server.
@@ -6,7 +11,11 @@ var dbDir = Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
     "AspireApp1");
 Directory.CreateDirectory(dbDir);
-var sqliteConnStr = $"Data Source={Path.Combine(dbDir, "statestore.db")}";
+var sqliteConnStr = builder.Configuration.GetConnectionString("statestore")
+    ?? $"Data Source={Path.Combine(dbDir, "statestore.db")}";
+var sqlServerConnStr = builder.Configuration.GetConnectionString("statestoreSqlServer")
+    ?? "Server=.;Database=AspireApp1StateStore;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True";
+var stateStoreConnStr = useSqlServerStateStore ? sqlServerConnStr : sqliteConnStr;
 
 var apiService = builder.AddProject<Projects.AspireApp1_ApiService>("apiservice")
     .WithHttpHealthCheck("/health")
@@ -20,7 +29,9 @@ var apiServiceForecast = builder.AddProject<Projects.AspireApp1_ApiServiceForeca
     .WithExternalHttpEndpoints()
     .WithReference(apiService)
     .WaitFor(apiService)
-    .WithEnvironment("ConnectionStrings__statestore", sqliteConnStr);
+    .WithEnvironment("StateStore__Provider", stateStoreProvider)
+    .WithEnvironment("ConnectionStrings__statestore", stateStoreConnStr)
+    .WithEnvironment("ConnectionStrings__statestoreSqlServer", sqlServerConnStr);
 // Add reference to apiServiceForecast, so apiService can call it
 apiService.WithReference(apiServiceForecast);
 // Add reference to apiErrorService, so apiService and apiServiceForecast can call it
@@ -58,7 +69,9 @@ var workerService1 = builder.AddProject<Projects.AspireApp1_WorkerService1>("wor
     .WithHttpHealthCheck("/health")
     .WithExternalHttpEndpoints()
     .WithReference(apiServiceStaticWeather)
-    .WithEnvironment("ConnectionStrings__statestore", sqliteConnStr);
+    .WithEnvironment("StateStore__Provider", stateStoreProvider)
+    .WithEnvironment("ConnectionStrings__statestore", stateStoreConnStr)
+    .WithEnvironment("ConnectionStrings__statestoreSqlServer", sqlServerConnStr);
 
 apiServiceForecast.WithReference(workerService1).WaitFor(workerService1);
 
@@ -66,7 +79,9 @@ var workerService2 = builder.AddProject<Projects.AspireApp1_WorkerService2>("wor
     .WithHttpHealthCheck("/health")
     .WithExternalHttpEndpoints()
     .WithReference(apiServiceStaticWeather)
-    .WithEnvironment("ConnectionStrings__statestore", sqliteConnStr);
+    .WithEnvironment("StateStore__Provider", stateStoreProvider)
+    .WithEnvironment("ConnectionStrings__statestore", stateStoreConnStr)
+    .WithEnvironment("ConnectionStrings__statestoreSqlServer", sqlServerConnStr);
 
 workerService1.WithReference(workerService2).WaitFor(workerService2);
 
@@ -74,7 +89,9 @@ var workerService3 = builder.AddProject<Projects.AspireApp1_WorkerService3>("wor
     .WithHttpHealthCheck("/health")
     .WithExternalHttpEndpoints()
     .WithReference(apiServiceStaticWeather)
-    .WithEnvironment("ConnectionStrings__statestore", sqliteConnStr);
+    .WithEnvironment("StateStore__Provider", stateStoreProvider)
+    .WithEnvironment("ConnectionStrings__statestore", stateStoreConnStr)
+    .WithEnvironment("ConnectionStrings__statestoreSqlServer", sqlServerConnStr);
 
 workerService1.WithReference(workerService3).WaitFor(workerService3);
 workerService2.WithReference(workerService3).WaitFor(workerService3);
@@ -85,7 +102,9 @@ var workerService4 = builder.AddProject<Projects.AspireApp1_WorkerService4>("wor
     .WithReference(workerService1)
     .WithReference(workerService2)
     .WithReference(workerService3)
-    .WithEnvironment("ConnectionStrings__statestore", sqliteConnStr)
+    .WithEnvironment("StateStore__Provider", stateStoreProvider)
+    .WithEnvironment("ConnectionStrings__statestore", stateStoreConnStr)
+    .WithEnvironment("ConnectionStrings__statestoreSqlServer", sqlServerConnStr)
     .WaitFor(workerService1)
     .WaitFor(workerService2)
     .WaitFor(workerService3);
@@ -97,7 +116,9 @@ var webFrontend = builder.AddProject<Projects.AspireApp1_Web>("webfrontend")
     .WaitFor(apiService)
     .WithReference(apiServiceForecast)
     .WithReference(apiServiceStaticWeather)
-    .WithEnvironment("ConnectionStrings__statestore", sqliteConnStr);
+    .WithEnvironment("StateStore__Provider", stateStoreProvider)
+    .WithEnvironment("ConnectionStrings__statestore", stateStoreConnStr)
+    .WithEnvironment("ConnectionStrings__statestoreSqlServer", sqlServerConnStr);
 
 // The web frontend triggers flows via WorkerService1
 webFrontend.WithReference(workerService1);

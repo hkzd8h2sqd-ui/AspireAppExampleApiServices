@@ -22,7 +22,12 @@ public static class DatabaseInitializer
             return;
         }
 
-        // Idempotent DDL for tables added in later iterations — safe to run against
+        if (!db.Database.IsSqlite())
+        {
+            return;
+        }
+
+        // SQLite-specific idempotent DDL for tables added in later iterations — safe to run against
         // both fresh databases (tables already created above) and existing databases
         // that were created before these tables were added to the EF Core model.
         // NOTE: Datetime columns are TEXT to match EF Core's SQLite convention,

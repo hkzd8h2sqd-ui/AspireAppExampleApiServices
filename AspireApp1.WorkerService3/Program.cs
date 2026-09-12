@@ -14,9 +14,7 @@ builder.Services.AddHttpClient("apiservicestaticweather", client =>
     client.BaseAddress = new Uri("https+http://apiservicestaticweather");
 });
 
-builder.Services.AddDbContext<StateStoreDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("statestore")
-        ?? $"Data Source={Path.Combine(Path.GetTempPath(), "AspireApp1StateStore", "statestore.db")}"));
+builder.Services.AddConfiguredStateStoreDbContext(builder.Configuration);
 
 var app = builder.Build();
 

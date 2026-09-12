@@ -22,9 +22,7 @@ builder.Services.AddHttpClient("workerservice3", client =>
     client.BaseAddress = new Uri("https+http://workerservice3");
 });
 
-builder.Services.AddDbContext<StateStoreDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("statestore")
-        ?? $"Data Source={Path.Combine(Path.GetTempPath(), "AspireApp1StateStore", "statestore.db")}"));
+builder.Services.AddConfiguredStateStoreDbContext(builder.Configuration);
 
 var app = builder.Build();
 
