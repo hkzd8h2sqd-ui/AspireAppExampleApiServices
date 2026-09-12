@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
+using Microsoft.Data.SqlClient;
 using System.Data;
 
 namespace AspireApp1.StateStore;
@@ -13,8 +14,7 @@ public static class DatabaseInitializer
 {
     public static async Task EnsureSchemaAsync(StateStoreDbContext db, CancellationToken cancellationToken = default)
     {
-        // Creates the full schema if the database is new; no-op if it already exists
-        await db.Database.EnsureCreatedAsync(cancellationToken);
+        await EnsureDatabaseCreatedAsync(db, cancellationToken);
 
         // Idempotent DDL for tables added in later iterations — only supported by relational providers.
         // Skipped when using the EF Core in-memory provider (e.g. in unit tests).
@@ -103,6 +103,42 @@ public static class DatabaseInitializer
             columnName: "MaxRetries",
             alterSql: "ALTER TABLE \"FlowStepRecords\" ADD COLUMN \"MaxRetries\" INTEGER NOT NULL DEFAULT 0;",
             cancellationToken);
+    }
+
+    private static async Task EnsureDatabaseCreatedAsync(
+        StateStoreDbContext db,
+        CancellationToken cancellationToken)
+    {
+        const int maxAttempts = 5;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                // Creates the database and full schema if missing; no-op if already present.
+                await db.Database.EnsureCreatedAsync(cancellationToken);
+                return;
+            }
+            catch (SqliteException ex) when (
+                ex.SqliteErrorCode == 5 || // SQLITE_BUSY
+                ex.SqliteErrorCode == 6)   // SQLITE_LOCKED
+            {
+                if (attempt == maxAttempts)
+                {
+                    throw;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt), cancellationToken);
+            }
+            catch (SqlException ex) when (ex.Number == 1801)
+            {
+                // Database was created concurrently by another service startup.
+                return;
+            }
+            catch (SqlException) when (attempt < maxAttempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt), cancellationToken);
+            }
+        }
     }
 
     private static async Task AddColumnIfMissingAsync(

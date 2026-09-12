@@ -51,6 +51,7 @@ StateStore kan köras med både SQLite och SQL Server via konfiguration i `Aspir
 - **Default är `Provider = "SqlServer"`**
 - `Provider = "SqlServer"` använder `ConnectionStrings:statestoreSqlServer`
 - `Provider = "Sqlite"` använder delad fil i LocalApplicationData (sätts i AppHost om `ConnectionStrings:statestore` saknas)
+- Databasen och tabellerna skapas automatiskt vid uppstart om de saknas (gäller både SQL Server och SQLite)
 - AppHost skickar alltid båda nycklarna till tjänsterna:
   - `ConnectionStrings:statestore` = SQLite-anslutning
   - `ConnectionStrings:statestoreSqlServer` = SQL Server-anslutning
