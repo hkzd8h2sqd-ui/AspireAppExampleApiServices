@@ -165,6 +165,89 @@ public class TraceQueryServiceTests
         Assert.AreEqual("AspireApp1.WorkerService2", flow.CurrentService);
     }
 
+    [TestMethod]
+    public async Task GetByTraceIdAsync_WhenOnlyFlowRunHasTraceId_ReturnsFlowRunAndSteps()
+    {
+        const string traceId = "cccccccccccccccccccccccccccccccc";
+        const string flowRunId = "flow-run-03";
+        var factory = CreateFactory();
+
+        await using (var db = factory.CreateDbContext())
+        {
+            db.FlowRunRecords.Add(new FlowRunRecord
+            {
+                FlowRunId = flowRunId,
+                FlowName = "FlowOnlyTraceOnRun",
+                CorrelationId = "corr-3",
+                TraceId = traceId,
+                StartedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+                Status = FlowRunStatus.Running
+            });
+
+            db.FlowStepRecords.AddRange(
+                new FlowStepRecord
+                {
+                    FlowRunId = flowRunId,
+                    StepOrder = 1,
+                    StepName = "Step1",
+                    ServiceName = "AspireApp1.WorkerService1",
+                    Status = FlowStepStatus.Completed
+                },
+                new FlowStepRecord
+                {
+                    FlowRunId = flowRunId,
+                    StepOrder = 2,
+                    StepName = "Step2",
+                    ServiceName = "AspireApp1.WorkerService2",
+                    Status = FlowStepStatus.Pending
+                });
+
+            await db.SaveChangesAsync();
+        }
+
+        var sut = new TraceQueryService(factory, NullLogger<TraceQueryService>.Instance);
+        var result = await sut.GetByTraceIdAsync(traceId);
+
+        Assert.IsNotNull(result);
+        var flow = result.FlowRuns.Single();
+        Assert.AreEqual("FlowOnlyTraceOnRun", flow.FlowName);
+        Assert.AreEqual(2, flow.TotalSteps);
+        Assert.AreEqual("Pågår", flow.Status);
+        Assert.AreEqual(1, flow.CurrentStep);
+        Assert.AreEqual("AspireApp1.WorkerService2", flow.CurrentService);
+    }
+
+    [TestMethod]
+    public async Task GetBySpanIdAsync_WhenSpanExistsInSpanRecords_ReturnsTrace()
+    {
+        const string traceId = "dddddddddddddddddddddddddddddddd";
+        const string spanId = "2222222222222222";
+        var factory = CreateFactory();
+
+        await using (var db = factory.CreateDbContext())
+        {
+            db.SpanRecords.Add(new SpanRecord
+            {
+                TraceId = traceId,
+                SpanId = spanId.ToUpperInvariant(),
+                ServiceName = "AspireApp1.ApiServiceForecast",
+                OperationName = "ApiServiceForecast.Process",
+                StartTime = DateTimeOffset.UtcNow.AddSeconds(-5),
+                EndTime = DateTimeOffset.UtcNow,
+                Status = SpanRecordStatus.OK,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var sut = new TraceQueryService(factory, NullLogger<TraceQueryService>.Instance);
+        var result = await sut.GetBySpanIdAsync(spanId);
+
+        Assert.IsNotNull(result);
+        Assert.AreEqual(traceId, result.TraceId);
+        Assert.AreEqual(1, result.Spans.Count);
+    }
+
     private static IDbContextFactory<StateStoreDbContext> CreateFactory()
     {
         var options = new DbContextOptionsBuilder<StateStoreDbContext>()

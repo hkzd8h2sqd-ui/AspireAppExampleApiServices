@@ -57,10 +57,20 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
             .OrderBy(s => s.StepOrder)
             .ToListAsync(cancellationToken);
 
-        var flowRunIds = tracedFlowSteps.Select(s => s.FlowRunId).Distinct().ToList();
+        var directlyMatchedFlowRuns = await db.FlowRunRecords
+            .Where(r => r.TraceId != null && r.TraceId.ToLower() == normalizedId)
+            .OrderBy(r => r.StartedAt)
+            .ToListAsync(cancellationToken);
+
+        var flowRunIds = tracedFlowSteps
+            .Select(s => s.FlowRunId)
+            .Concat(directlyMatchedFlowRuns.Select(r => r.FlowRunId))
+            .Distinct()
+            .ToList();
         var flowRuns = flowRunIds.Count > 0
             ? await db.FlowRunRecords
                 .Where(r => flowRunIds.Contains(r.FlowRunId))
+                .OrderBy(r => r.StartedAt)
                 .ToListAsync(cancellationToken)
             : [];
         var flowSteps = flowRunIds.Count > 0
@@ -170,6 +180,16 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
         if (flowStep?.TraceId is not null)
         {
             return await GetByTraceIdAsync(flowStep.TraceId, cancellationToken);
+        }
+
+        var spanRecord = await db.SpanRecords
+            .Where(s => s.SpanId.ToLower() == normalizedId)
+            .OrderBy(s => s.StartTime)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (spanRecord is not null)
+        {
+            return await GetByTraceIdAsync(spanRecord.TraceId, cancellationToken);
         }
 
         logger.LogInformation("TraceQuery by spanId={SpanId}: no matching record found", normalizedId);
