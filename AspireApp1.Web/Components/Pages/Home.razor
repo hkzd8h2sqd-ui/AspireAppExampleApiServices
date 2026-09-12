@@ -1,9 +1,10 @@
 ﻿@page "/"
 @rendermode InteractiveServer
+@implements IDisposable
 @using AspireApp1.StateStore
 @using AspireApp1.Web.Models
 @using Microsoft.EntityFrameworkCore
-@inject StateStoreDbContext Db
+@inject IDbContextFactory<StateStoreDbContext> DbFactory
 @inject ILogger<Home> Logger
 
 <PageTitle>AspireApp1 – Demo Dashboard</PageTitle>
@@ -134,6 +135,38 @@
 </div>
 
 <div class="card mt-4">
+    <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+        <span>Tjänstehälsa (senaste per tjänst)</span>
+        <small class="text-muted">Auto-uppdateras var 5:e sekund</small>
+    </div>
+    <div class="card-body">
+        @if (_serviceHealth.Count == 0)
+        {
+            <div class="text-muted small">Inga hälsokontroller registrerade ännu.</div>
+        }
+        else
+        {
+            <div class="row g-2">
+                @foreach (var health in _serviceHealth)
+                {
+                    <div class="col-md-4 col-lg-3">
+                        <div class="border rounded p-2 h-100">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <strong class="small">@health.ServiceName</strong>
+                                <span class="@GetHealthBadgeClass(health.Status)" title="@health.Description">
+                                    @GetHealthEmoji(health.Status) @health.Status
+                                </span>
+                            </div>
+                            <div class="text-muted small mt-1">HTTP @health.HttpStatusCode • @health.CheckedAt.ToString("HH:mm:ss")</div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+<div class="card mt-4">
     <div class="card-header fw-semibold">Senaste körningar</div>
     <div class="card-body">
         @if (_latestRuns.Count == 0)
@@ -176,6 +209,9 @@
                     </tbody>
                 </table>
             </div>
+            <div class="mt-3">
+                <a class="btn btn-outline-secondary btn-sm" href="/flowruns">Visa alla körningar →</a>
+            </div>
         }
     </div>
 </div>
@@ -190,25 +226,46 @@
     private int _completedCount;
     private int _failedCount;
     private int _waitingCount;
+    private bool _isDisposed;
     private List<FlowRunOverview> _latestRuns = [];
+    private List<ServiceHealthOverview> _serviceHealth = [];
+    private System.Threading.Timer? _refreshTimer;
 
     protected override async Task OnInitializedAsync()
     {
+        await RefreshAsync();
+        StartRefreshTimer();
+    }
+
+    private void StartRefreshTimer()
+    {
+        _refreshTimer?.Dispose();
+        _refreshTimer = new System.Threading.Timer(
+            _ => InvokeAsync(RefreshAsync),
+            null,
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(5));
+    }
+
+    private async Task RefreshAsync()
+    {
         try
         {
-            _jobCount = await Db.JobStates.CountAsync();
-            _flowRunCount = await Db.FlowRunRecords.CountAsync();
-            _spanCount = await Db.SpanRecords.CountAsync();
-            _healthCheckCount = await Db.ServiceHealthRecords.CountAsync();
+            await using var db = await DbFactory.CreateDbContextAsync();
 
-            var latestFlowRuns = await Db.FlowRunRecords
+            _jobCount = await db.JobStates.CountAsync();
+            _flowRunCount = await db.FlowRunRecords.CountAsync();
+            _spanCount = await db.SpanRecords.CountAsync();
+            _healthCheckCount = await db.ServiceHealthRecords.CountAsync();
+
+            var latestFlowRuns = await db.FlowRunRecords
                 .OrderByDescending(r => r.StartedAt)
-                .Take(5)
+                .Take(8)
                 .ToListAsync();
 
             var flowRunIds = latestFlowRuns.Select(r => r.FlowRunId).ToList();
             var allSteps = flowRunIds.Count > 0
-                ? await Db.FlowStepRecords
+                ? await db.FlowStepRecords
                     .Where(s => flowRunIds.Contains(s.FlowRunId))
                     .ToListAsync()
                 : [];
@@ -232,13 +289,36 @@
             _completedCount = _latestRuns.Count(r => r.Status == "Klar");
             _failedCount = _latestRuns.Count(r => r.Status == "Fel");
             _waitingCount = _latestRuns.Count(r => r.Status == "Väntar");
+
+            var latestHealthChecks = await db.ServiceHealthRecords
+                .OrderByDescending(h => h.CheckedAt)
+                .Take(2000)
+                .ToListAsync();
+
+            _serviceHealth = latestHealthChecks
+                .GroupBy(h => h.ServiceName)
+                .Select(g => g.First())
+                .OrderBy(h => h.ServiceName)
+                .Select(h => new ServiceHealthOverview
+                {
+                    ServiceName = h.ServiceName,
+                    Status = h.IsHealthy ? "OK" : h.HttpStatusCode >= 500 ? "Error" : "Varning",
+                    CheckedAt = h.CheckedAt,
+                    HttpStatusCode = h.HttpStatusCode
+                })
+                .ToList();
         }
         catch (Exception ex)
         {
-            // DB may not be available on first run before schema initialisation completes
             Logger.LogWarning(ex, "Could not load state store stats on home page");
         }
+
         _statsLoaded = true;
+
+        if (!_isDisposed)
+        {
+            StateHasChanged();
+        }
     }
 
     private static string GetStatusBadge(string status) => status switch
@@ -253,6 +333,28 @@
     private static string GetStatusDescription(FlowRunOverview run) =>
         $"{run.Status}. Steg {run.CurrentStep} av {run.TotalSteps}. Aktiv tjänst: {run.CurrentService}.";
 
+    private static string GetHealthEmoji(string status) => status switch
+    {
+        "OK" => "✅",
+        "Varning" => "⚠️",
+        "Error" => "❌",
+        _ => "❓"
+    };
+
+    private static string GetHealthBadgeClass(string status) => status switch
+    {
+        "OK" => "badge bg-success",
+        "Varning" => "badge bg-warning text-dark",
+        "Error" => "badge bg-danger",
+        _ => "badge bg-secondary"
+    };
+
+    public void Dispose()
+    {
+        _isDisposed = true;
+        _refreshTimer?.Dispose();
+    }
+
     private sealed class FlowRunOverview
     {
         public string FlowName { get; init; } = string.Empty;
@@ -261,5 +363,14 @@
         public int TotalSteps { get; init; }
         public string CurrentService { get; init; } = string.Empty;
         public DateTimeOffset StartedAt { get; init; }
+    }
+
+    private sealed class ServiceHealthOverview
+    {
+        public string ServiceName { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public DateTimeOffset CheckedAt { get; init; }
+        public int HttpStatusCode { get; init; }
+        public string Description => $"{Status} för {ServiceName} (HTTP {HttpStatusCode})";
     }
 }

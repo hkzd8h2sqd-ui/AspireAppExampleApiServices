@@ -1,0 +1,151 @@
+@page "/flowruns"
+@rendermode InteractiveServer
+@implements IDisposable
+@using AspireApp1.StateStore
+@using AspireApp1.Web.Models
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<StateStoreDbContext> DbFactory
+@inject ILogger<FlowRuns> Logger
+
+<PageTitle>Alla körningar</PageTitle>
+
+<h1>Alla körningar</h1>
+<p class="text-muted">Visar senaste 100 flödeskörningar. Auto-uppdateras var 5:e sekund.</p>
+
+@if (!_loaded)
+{
+    <div class="text-muted"><span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Laddar körningar…</div>
+}
+else if (_runs.Count == 0)
+{
+    <div class="alert alert-info">Inga körningar hittades ännu.</div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-sm table-striped align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>Start</th>
+                    <th>Flöde</th>
+                    <th>Status</th>
+                    <th>Steg</th>
+                    <th>Tjänst</th>
+                    <th>Spåra</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var run in _runs)
+                {
+                    <tr>
+                        <td class="small">@run.StartedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                        <td class="small">@run.FlowName</td>
+                        <td><span class="badge @GetStatusBadge(run.Status)">@run.Status</span></td>
+                        <td class="small">Steg @run.CurrentStep/@run.TotalSteps</td>
+                        <td class="small">@run.CurrentService</td>
+                        <td class="small">
+                            @if (!string.IsNullOrWhiteSpace(run.TraceId))
+                            {
+                                <a class="btn btn-outline-primary btn-sm py-0 px-2" href="/processflow?traceId=@Uri.EscapeDataString(run.TraceId)">Trace</a>
+                            }
+                            else if (!string.IsNullOrWhiteSpace(run.CorrelationId))
+                            {
+                                <a class="btn btn-outline-secondary btn-sm py-0 px-2" href="/processflow?correlationId=@Uri.EscapeDataString(run.CorrelationId)">Corr</a>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private bool _loaded;
+    private bool _isDisposed;
+    private List<FlowRunListItem> _runs = [];
+    private System.Threading.Timer? _refreshTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        _refreshTimer = new System.Threading.Timer(
+            _ => InvokeAsync(RefreshAsync),
+            null,
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(5));
+    }
+
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var flowRuns = await db.FlowRunRecords
+                .OrderByDescending(r => r.StartedAt)
+                .Take(100)
+                .ToListAsync();
+
+            var flowRunIds = flowRuns.Select(r => r.FlowRunId).ToList();
+            var steps = flowRunIds.Count > 0
+                ? await db.FlowStepRecords
+                    .Where(s => flowRunIds.Contains(s.FlowRunId))
+                    .ToListAsync()
+                : [];
+
+            _runs = flowRuns.Select(run =>
+            {
+                var state = FlowRunStateCalculator.Build(run, steps);
+                return new FlowRunListItem
+                {
+                    FlowName = run.FlowName,
+                    StartedAt = run.StartedAt,
+                    Status = state.Status,
+                    CurrentStep = state.CurrentStep,
+                    TotalSteps = state.TotalSteps,
+                    CurrentService = state.CurrentService ?? "okänd",
+                    TraceId = run.TraceId,
+                    CorrelationId = run.CorrelationId
+                };
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Could not load flow runs");
+        }
+
+        _loaded = true;
+        if (!_isDisposed)
+        {
+            StateHasChanged();
+        }
+    }
+
+    private static string GetStatusBadge(string status) => status switch
+    {
+        "Klar" => "bg-success",
+        "Fel" => "bg-danger",
+        "Pågår" => "bg-primary",
+        "Väntar" => "bg-secondary",
+        _ => "bg-secondary"
+    };
+
+    public void Dispose()
+    {
+        _isDisposed = true;
+        _refreshTimer?.Dispose();
+    }
+
+    private sealed class FlowRunListItem
+    {
+        public string FlowName { get; init; } = string.Empty;
+        public DateTimeOffset StartedAt { get; init; }
+        public string Status { get; init; } = string.Empty;
+        public int CurrentStep { get; init; }
+        public int TotalSteps { get; init; }
+        public string CurrentService { get; init; } = string.Empty;
+        public string? TraceId { get; init; }
+        public string? CorrelationId { get; init; }
+    }
+}
