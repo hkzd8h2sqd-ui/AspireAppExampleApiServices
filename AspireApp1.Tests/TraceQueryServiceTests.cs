@@ -105,6 +105,66 @@ public class TraceQueryServiceTests
         Assert.AreEqual("Timeout in WorkerService2", flow.ErrorMessage);
     }
 
+    [TestMethod]
+    public async Task GetByTraceIdAsync_IncludesPendingStepsWithoutTraceIdForMatchedFlowRun()
+    {
+        const string traceId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        const string flowRunId = "flow-run-02";
+        var factory = CreateFactory();
+
+        await using (var db = factory.CreateDbContext())
+        {
+            db.FlowRunRecords.Add(new FlowRunRecord
+            {
+                FlowRunId = flowRunId,
+                FlowName = "LongFlow",
+                CorrelationId = "corr-2",
+                TraceId = traceId,
+                StartedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                Status = FlowRunStatus.Running
+            });
+
+            db.FlowStepRecords.AddRange(
+                new FlowStepRecord
+                {
+                    FlowRunId = flowRunId,
+                    StepOrder = 1,
+                    StepName = "Step1",
+                    ServiceName = "AspireApp1.WorkerService1",
+                    Status = FlowStepStatus.Completed,
+                    TraceId = traceId
+                },
+                new FlowStepRecord
+                {
+                    FlowRunId = flowRunId,
+                    StepOrder = 2,
+                    StepName = "Step2",
+                    ServiceName = "AspireApp1.WorkerService2",
+                    Status = FlowStepStatus.Pending
+                },
+                new FlowStepRecord
+                {
+                    FlowRunId = flowRunId,
+                    StepOrder = 3,
+                    StepName = "Step3",
+                    ServiceName = "AspireApp1.WorkerService3",
+                    Status = FlowStepStatus.Pending
+                });
+
+            await db.SaveChangesAsync();
+        }
+
+        var sut = new TraceQueryService(factory, NullLogger<TraceQueryService>.Instance);
+        var result = await sut.GetByTraceIdAsync(traceId);
+
+        Assert.IsNotNull(result);
+        var flow = result.FlowRuns.Single();
+        Assert.AreEqual(3, flow.TotalSteps);
+        Assert.AreEqual(1, flow.CurrentStep);
+        Assert.AreEqual("Pågår", flow.Status);
+        Assert.AreEqual("AspireApp1.WorkerService1", flow.CurrentService);
+    }
+
     private static IDbContextFactory<StateStoreDbContext> CreateFactory()
     {
         var options = new DbContextOptionsBuilder<StateStoreDbContext>()

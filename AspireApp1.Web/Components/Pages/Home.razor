@@ -1,6 +1,7 @@
 ﻿@page "/"
 @rendermode InteractiveServer
 @using AspireApp1.StateStore
+@using AspireApp1.Web.Models
 @using Microsoft.EntityFrameworkCore
 @inject StateStoreDbContext Db
 @inject ILogger<Home> Logger
@@ -163,7 +164,9 @@
                         {
                             <tr>
                                 <td class="small">@run.FlowName</td>
-                                <td><span class="badge @GetStatusBadge(run.Status)">@run.Status</span></td>
+                                <td>
+                                    <span class="badge @GetStatusBadge(run.Status)" aria-label="@GetStatusDescription(run)" title="@GetStatusDescription(run)">@run.Status</span>
+                                </td>
                                 <td class="small">Steg @run.CurrentStep/@run.TotalSteps</td>
                                 <td class="small">@run.CurrentService</td>
                                 <td class="small text-muted">@run.StartedAt.ToString("HH:mm:ss")</td>
@@ -211,38 +214,15 @@
 
             _latestRuns = latestFlowRuns.Select(run =>
             {
-                var steps = allSteps.Where(s => s.FlowRunId == run.FlowRunId).OrderBy(s => s.StepOrder).ToList();
-                var failedStep = steps.FirstOrDefault(s => s.Status == FlowStepStatus.Failed);
-                var runningStep = steps.FirstOrDefault(s => s.Status is FlowStepStatus.Running or FlowStepStatus.Retrying);
-                var totalSteps = steps.Count > 0 ? steps.Max(s => s.StepOrder) : 0;
-                var lastSuccess = steps
-                    .Where(s => s.Status == FlowStepStatus.Completed)
-                    .Select(s => (int?)s.StepOrder)
-                    .Max();
-                var currentStep = failedStep?.StepOrder ?? runningStep?.StepOrder ?? lastSuccess ?? (totalSteps > 0 ? 1 : 0);
-                var currentService = failedStep?.ServiceName
-                    ?? runningStep?.ServiceName
-                    ?? steps.FirstOrDefault(s => s.StepOrder == currentStep)?.ServiceName
-                    ?? "okänd";
-                var status = failedStep is not null
-                    ? "Fel"
-                    : runningStep is not null
-                        ? "Pågår"
-                        : steps.Any(s => s.Status == FlowStepStatus.Pending) && !steps.Any(s => s.Status == FlowStepStatus.Completed)
-                            ? "Väntar"
-                            : run.Status == FlowRunStatus.Running
-                                ? "Pågår"
-                                : run.Status == FlowRunStatus.Completed
-                                ? "Klar"
-                                : "Okänd";
+                var flowState = FlowRunStateCalculator.Build(run, allSteps);
 
                 return new FlowRunOverview
                 {
-                    FlowName = run.FlowName,
-                    Status = status,
-                    CurrentStep = currentStep,
-                    TotalSteps = totalSteps,
-                    CurrentService = currentService,
+                    FlowName = flowState.FlowName,
+                    Status = flowState.Status,
+                    CurrentStep = flowState.CurrentStep,
+                    TotalSteps = flowState.TotalSteps,
+                    CurrentService = flowState.CurrentService ?? "okänd",
                     StartedAt = run.StartedAt
                 };
             }).ToList();
@@ -268,6 +248,9 @@
         "Väntar" => "bg-secondary",
         _ => "bg-secondary"
     };
+
+    private static string GetStatusDescription(FlowRunOverview run) =>
+        $"{run.Status}. Steg {run.CurrentStep} av {run.TotalSteps}. Aktiv tjänst: {run.CurrentService}.";
 
     private sealed class FlowRunOverview
     {
