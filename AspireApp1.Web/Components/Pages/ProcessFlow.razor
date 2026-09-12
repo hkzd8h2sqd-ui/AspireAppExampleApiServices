@@ -204,6 +204,21 @@ else if (currentTrace is not null)
 
     @if (viewMode == "steps")
     {
+        <div class="step-controls mb-3">
+            <div class="btn-group btn-group-sm" role="group" aria-label="Detaljkontroller">
+                <button type="button" class="btn btn-outline-primary" @onclick="ExpandAllDetails">Öppna alla detaljer</button>
+                <button type="button" class="btn btn-outline-primary" @onclick="CollapseAllDetails">Stäng alla detaljer</button>
+            </div>
+            <div class="btn-group btn-group-sm" role="group" aria-label="Grenkontroller">
+                <button type="button" class="btn btn-outline-secondary" @onclick="ExpandAllBranches">Expandera alla grenar</button>
+                <button type="button" class="btn btn-outline-secondary" @onclick="CollapseAllBranches">Kollapsa alla grenar</button>
+            </div>
+            <span class="badge bg-light text-dark border">Tider i stegvy visas i sekunder</span>
+        </div>
+    }
+
+    @if (viewMode == "steps")
+    {
         <div class="step-tree">
             @foreach (var span in GetRootSpans(VisibleSpans))
             {
@@ -231,9 +246,10 @@ else if (currentTrace is not null)
     private bool notFound;
     private string? validationError;
     private TraceModel? currentTrace;
-    private SpanModel? selectedSpan;
+    private string? selectedSpanId;
     private string? highlightSpanId;
     private HashSet<string> highlightedSpanIds = [];
+    private HashSet<string> openSpanDetailIds = [];
     private HashSet<string> collapsedSpanIds = [];
     private string? _copyFeedback;
     private System.Threading.Timer? _copyFeedbackTimer;
@@ -287,9 +303,10 @@ else if (currentTrace is not null)
     {
         validationError = null;
         notFound = false;
-        selectedSpan = null;
+        selectedSpanId = null;
         highlightSpanId = null;
         highlightedSpanIds = [];
+        openSpanDetailIds = [];
         collapsedSpanIds = [];
         currentTrace = null;
 
@@ -451,9 +468,13 @@ else if (currentTrace is not null)
         return currentTrace.Spans.Select(s => s.ServiceName).Distinct().Order();
     }
 
-    private void SelectSpan(SpanModel span)
+    private void ToggleSpanDetails(SpanModel span)
     {
-        selectedSpan = selectedSpan?.SpanId == span.SpanId ? null : span;
+        selectedSpanId = span.SpanId;
+        if (!openSpanDetailIds.Add(span.SpanId))
+        {
+            openSpanDetailIds.Remove(span.SpanId);
+        }
     }
 
     private void ToggleChildren(SpanModel span)
@@ -462,6 +483,57 @@ else if (currentTrace is not null)
         {
             collapsedSpanIds.Remove(span.SpanId);
         }
+    }
+
+    private void ExpandAllDetails()
+    {
+        openSpanDetailIds = [.. VisibleSpans.Select(s => s.SpanId)];
+    }
+
+    private void CollapseAllDetails()
+    {
+        openSpanDetailIds.Clear();
+    }
+
+    private void ExpandAllBranches()
+    {
+        collapsedSpanIds.Clear();
+    }
+
+    private void CollapseAllBranches()
+    {
+        collapsedSpanIds = [.. VisibleSpans
+            .Where(s => VisibleSpans.Any(c => c.ParentSpanId == s.SpanId))
+            .Select(s => s.SpanId)];
+    }
+
+    private static string GetStepStatusText(SpanStatus status) => status switch
+    {
+        SpanStatus.OK => "Klar",
+        SpanStatus.Warning => "Varning",
+        SpanStatus.Error => "Fel",
+        SpanStatus.InProgress => "Pågår",
+        _ => "Okänd"
+    };
+
+    private static string GetStepStatusBadgeClass(SpanStatus status) => status switch
+    {
+        SpanStatus.OK => "bg-success",
+        SpanStatus.Warning => "bg-warning text-dark",
+        SpanStatus.Error => "bg-danger",
+        SpanStatus.InProgress => "bg-primary",
+        _ => "bg-secondary"
+    };
+
+    private string GetOffsetFromTraceStartText(SpanModel span)
+    {
+        if (currentTrace is null)
+        {
+            return "Start +0.00 sek";
+        }
+
+        var seconds = (span.StartTime - currentTrace.StartTime).TotalSeconds;
+        return $"Start +{seconds:F2} sek";
     }
 
     private static (string cssClass, string text) GetOverallStatusBadge(TraceModel trace)
@@ -492,11 +564,26 @@ else if (currentTrace is not null)
 
     private static string GetStatusRowClass(SpanStatus status) => status switch
     {
-        SpanStatus.Error => "table-danger",
-        SpanStatus.Warning => "table-warning",
-        SpanStatus.InProgress => "table-info",
+        SpanStatus.Error => "span-row-error",
+        SpanStatus.Warning => "span-row-warning",
+        SpanStatus.InProgress => "span-row-progress",
         _ => string.Empty
     };
+
+    private string GetGanttRowClass(SpanModel span, bool isHighlighted)
+    {
+        if (isHighlighted)
+        {
+            return "table-primary";
+        }
+
+        if (selectedSpanId == span.SpanId)
+        {
+            return "table-active";
+        }
+
+        return string.Empty;
+    }
 
     private static string GetLogLevelClass(string level) => level.ToUpperInvariant() switch
     {
@@ -553,27 +640,29 @@ else if (currentTrace is not null)
         var children = allSpans.Where(s => s.ParentSpanId == span.SpanId).OrderBy(s => s.StartTime).ToList();
         var hasChildren = children.Count > 0;
         var isCollapsed = collapsedSpanIds.Contains(span.SpanId);
-        var isDetailsOpen = selectedSpan?.SpanId == span.SpanId;
+        var isDetailsOpen = openSpanDetailIds.Contains(span.SpanId);
+        var isSelected = selectedSpanId == span.SpanId;
         var isHighlighted = highlightedSpanIds.Contains(span.SpanId.ToLowerInvariant());
-        var rowClass = isHighlighted ? "table-primary" : GetStatusRowClass(span.Status);
+        var rowClass = isHighlighted ? "span-row-highlight" : GetStatusRowClass(span.Status);
         var durationText = FormatDurationSeconds(span.Duration);
+        var offsetText = GetOffsetFromTraceStartText(span);
 
-        <div class="span-row @rowClass mb-1 p-2 border rounded span-row-enhanced @(isDetailsOpen ? "span-row-open" : string.Empty)" style="margin-left: @(depth * 1.5)rem;">
+        <div class="span-row @rowClass mb-2 p-2 border rounded span-row-enhanced @(isDetailsOpen ? "span-row-open" : string.Empty) @(isSelected ? "span-row-selected" : string.Empty)" style="margin-left: @(depth * 1.2)rem;">
             <div class="d-flex align-items-center gap-2 flex-wrap span-row-header">
-                <span>@GetStatusEmoji(span.Status)</span>
-                <strong>@span.ServiceName</strong>
-                <span class="text-muted">›</span>
-                <span>@span.OperationName</span>
-                <small class="text-muted ms-auto">@span.StartTime.ToString("HH:mm:ss.fff") | @durationText</small>
                 @if (hasChildren)
                 {
                     <button class="btn btn-sm btn-outline-primary py-0 px-2" @onclick="() => ToggleChildren(span)" title="Visa/dölj underliggande spans">
                         @(isCollapsed ? $"▶ {children.Count}" : $"▼ {children.Count}")
                     </button>
                 }
-                <button class="btn btn-sm @(isDetailsOpen ? "btn-primary" : "btn-outline-secondary") py-0 px-2" @onclick="() => SelectSpan(span)" title="Visa/dölj detaljer">
-                    @(isDetailsOpen ? "Dölj detaljer" : "Visa detaljer")
+                <button class="btn btn-sm @(isDetailsOpen ? "btn-primary" : "btn-outline-secondary") py-0 px-2" @onclick="() => ToggleSpanDetails(span)" title="Visa/dölj detaljer">
+                    @(isDetailsOpen ? "Stäng" : "Öppna")
                 </button>
+                <span class="badge @GetStepStatusBadgeClass(span.Status)">@GetStatusEmoji(span.Status) @GetStepStatusText(span.Status)</span>
+                <strong>@span.ServiceName</strong>
+                <span class="text-muted">›</span>
+                <span>@span.OperationName</span>
+                <small class="text-muted ms-auto">@offsetText | @durationText</small>
             </div>
             @if (!string.IsNullOrEmpty(span.ErrorMessage))
             {
@@ -589,7 +678,7 @@ else if (currentTrace is not null)
                         <dt class="col-sm-2">Parent</dt>
                         <dd class="col-sm-10"><code>@(span.ParentSpanId ?? "–")</code></dd>
                         <dt class="col-sm-2">Starttid</dt>
-                        <dd class="col-sm-10">@span.StartTime.ToString("yyyy-MM-dd HH:mm:ss.fff zzz")</dd>
+                        <dd class="col-sm-10">@span.StartTime.ToString("yyyy-MM-dd HH:mm:ss zzz") (@offsetText)</dd>
                         <dt class="col-sm-2">Varaktighet</dt>
                         <dd class="col-sm-10">@durationText</dd>
                         @if (span.HttpStatusCode.HasValue)
@@ -611,7 +700,7 @@ else if (currentTrace is not null)
                             @foreach (var log in span.LogEntries)
                             {
                                 <div class="log-entry @GetLogLevelClass(log.Level) mt-1 p-1 rounded small">
-                                    <span class="fw-semibold me-1">[@log.Timestamp.ToString("HH:mm:ss.fff")]</span>
+                                    <span class="fw-semibold me-1">[@log.Timestamp.ToString("HH:mm:ss")]</span>
                                     <span class="badge @GetLogBadgeClass(log.Level) me-1">@log.Level</span>
                                     @log.Message
                                 </div>
@@ -675,7 +764,7 @@ else if (currentTrace is not null)
                         };
                         var isHighlighted = highlightedSpanIds.Contains(span.SpanId.ToLowerInvariant());
 
-                        <tr class="@(isHighlighted ? "table-primary" : string.Empty)" @onclick="() => SelectSpan(span)" style="cursor:pointer;" title="@span.OperationName">
+                        <tr class="@GetGanttRowClass(span, isHighlighted)" @onclick="() => ToggleSpanDetails(span)" style="cursor:pointer;" title="@span.OperationName">
                             <td class="small">
                                 <span>@GetStatusEmoji(span.Status)</span>
                                 <strong>@span.ServiceName</strong><br />
