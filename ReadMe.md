@@ -52,4 +52,12 @@ StateStore kan köras med både SQLite och SQL Server via konfiguration i `appse
 - `Provider = "Sqlite"` använder `ConnectionStrings:statestore`
 - `Provider = "SqlServer"` använder `ConnectionStrings:statestoreSqlServer`
 
+### Så växlar du provider
+1. Öppna `appsettings.Development.json` för de tjänster som använder StateStore (`AspireApp1.AppHost`, `AspireApp1.Web`, `AspireApp1.WorkerService1-4`, `AspireApp1.ApiServiceForecast`).
+2. Sätt `StateStore:Provider` till `Sqlite` eller `SqlServer`.
+3. Kontrollera att motsvarande connection string är satt.
+4. Starta om `AspireApp1.AppHost`.
+
+Startsidan i frontend visar nu aktiv provider under rubriken **Aktiv StateStore DB**.
+
 Sidan `/flowruns` visar alla senaste flödeskörningar och länkar vidare till `/processflow`.

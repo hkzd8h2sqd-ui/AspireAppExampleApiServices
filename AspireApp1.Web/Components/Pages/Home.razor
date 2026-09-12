@@ -5,6 +5,7 @@
 @using AspireApp1.Web.Models
 @using Microsoft.EntityFrameworkCore
 @inject IDbContextFactory<StateStoreDbContext> DbFactory
+@inject IConfiguration Configuration
 @inject ILogger<Home> Logger
 
 <PageTitle>AspireApp1 – Demo Dashboard</PageTitle>
@@ -13,6 +14,11 @@
 <p class="lead text-muted mb-4">
     En Aspire-baserad mikrotjänstdemonstration med distribuerad telemetri, processflödesvisualisering och worker-kedjor.
 </p>
+<div class="alert alert-secondary py-2 px-3 mb-4">
+    <strong>Aktiv StateStore DB:</strong>
+    <span class="ms-1 badge @GetDbProviderBadgeClass(_dbProviderDisplay)">@_dbProviderDisplay</span>
+    <span class="ms-2 text-muted small">@_dbProviderDetail</span>
+</div>
 
 <!-- Quick actions -->
 <div class="row g-3 mb-5">
@@ -94,7 +100,7 @@
             </div>
         </div>
         <p class="text-muted small text-center mt-2 mb-0">
-            WorkerService&nbsp;4 övervakar WS1–WS3 periodiskt. Alla tjänster skriver telemetri till SQLite-tillståndslagret.
+            WorkerService&nbsp;4 övervakar WS1–WS3 periodiskt. Alla tjänster skriver telemetri till StateStore-databasen.
         </p>
     </div>
 </div>
@@ -227,6 +233,8 @@
     private int _failedCount;
     private int _waitingCount;
     private bool _isDisposed;
+    private string _dbProviderDisplay = "SQLite";
+    private string _dbProviderDetail = "ConnectionStrings:statestore";
     private List<FlowRunOverview> _latestRuns = [];
     private List<ServiceHealthOverview> _serviceHealth = [];
     private System.Threading.Timer? _refreshTimer;
@@ -252,6 +260,9 @@
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
+            var provider = StateStoreDbRegistration.ResolveProvider(Configuration);
+            _dbProviderDisplay = provider == "sqlserver" ? "SQL Server" : "SQLite";
+            _dbProviderDetail = GetDbProviderDetail(provider);
 
             _jobCount = await db.JobStates.CountAsync();
             _flowRunCount = await db.FlowRunRecords.CountAsync();
@@ -347,6 +358,26 @@
         "Varning" => "badge bg-warning text-dark",
         "Error" => "badge bg-danger",
         _ => "badge bg-secondary"
+    };
+
+    private string GetDbProviderDetail(string provider)
+    {
+        if (provider == "sqlserver")
+        {
+            var sqlServerConnection = Configuration.GetConnectionString("statestoreSqlServer") ?? string.Empty;
+            var serverPart = sqlServerConnection.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault(part => part.TrimStart().StartsWith("Server=", StringComparison.OrdinalIgnoreCase));
+            return serverPart is not null ? $"{serverPart} • ConnectionStrings:statestoreSqlServer" : "ConnectionStrings:statestoreSqlServer";
+        }
+
+        return "ConnectionStrings:statestore";
+    }
+
+    private static string GetDbProviderBadgeClass(string provider) => provider switch
+    {
+        "SQL Server" => "bg-primary",
+        "SQLite" => "bg-success",
+        _ => "bg-secondary"
     };
 
     public void Dispose()
