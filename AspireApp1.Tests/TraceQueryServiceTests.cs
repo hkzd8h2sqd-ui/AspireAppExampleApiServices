@@ -162,7 +162,7 @@ public class TraceQueryServiceTests
         Assert.AreEqual(3, flow.TotalSteps);
         Assert.AreEqual(1, flow.CurrentStep);
         Assert.AreEqual("Pågår", flow.Status);
-        Assert.AreEqual("AspireApp1.WorkerService1", flow.CurrentService);
+        Assert.AreEqual("AspireApp1.WorkerService2", flow.CurrentService);
     }
 
     private static IDbContextFactory<StateStoreDbContext> CreateFactory()

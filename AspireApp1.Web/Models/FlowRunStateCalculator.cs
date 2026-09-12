@@ -23,9 +23,11 @@ public static class FlowRunStateCalculator
             ?? activeStep?.StepOrder
             ?? lastSuccess
             ?? (totalSteps > 0 ? 1 : 0);
+        var nextPendingStep = runSteps.FirstOrDefault(s => s.Status == FlowStepStatus.Pending);
 
         var currentService = firstFailed?.ServiceName
             ?? activeStep?.ServiceName
+            ?? nextPendingStep?.ServiceName
             ?? runSteps.FirstOrDefault(s => s.StepOrder == currentStep)?.ServiceName;
 
         var status = firstFailed is not null
