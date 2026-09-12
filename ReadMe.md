@@ -35,7 +35,7 @@ För krav, specifikation och implementationsplan gällande frontend-visualiserin
 
 ## StateStore databas (SQLite eller SQL Server)
 
-StateStore kan köras med både SQLite och SQL Server via konfiguration i `appsettings.Development.json`.
+StateStore kan köras med både SQLite och SQL Server via konfiguration i `AspireApp1.AppHost/appsettings.Development.json` (globalt för hela lösningen).
 
 ```json
 {
@@ -43,17 +43,16 @@ StateStore kan köras med både SQLite och SQL Server via konfiguration i `appse
     "Provider": "Sqlite"
   },
   "ConnectionStrings": {
-    "statestore": "Data Source=/tmp/AspireApp1StateStore/statestore.db",
     "statestoreSqlServer": "Server=.;Database=AspireApp1StateStore;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True"
   }
 }
 ```
 
-- `Provider = "Sqlite"` använder `ConnectionStrings:statestore`
+- `Provider = "Sqlite"` använder delad fil i LocalApplicationData (sätts i AppHost om `ConnectionStrings:statestore` saknas)
 - `Provider = "SqlServer"` använder `ConnectionStrings:statestoreSqlServer`
 
 ### Så växlar du provider
-1. Öppna `appsettings.Development.json` för de tjänster som använder StateStore (`AspireApp1.AppHost`, `AspireApp1.Web`, `AspireApp1.WorkerService1-4`, `AspireApp1.ApiServiceForecast`).
+1. Öppna `AspireApp1.AppHost/appsettings.Development.json`.
 2. Sätt `StateStore:Provider` till `Sqlite` eller `SqlServer`.
 3. Kontrollera att motsvarande connection string är satt.
 4. Starta om `AspireApp1.AppHost`.

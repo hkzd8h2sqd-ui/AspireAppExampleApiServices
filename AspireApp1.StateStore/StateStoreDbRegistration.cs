@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Data.Sqlite;
 
 namespace AspireApp1.StateStore;
 
@@ -66,7 +67,51 @@ public static class StateStoreDbRegistration
         }
         else
         {
+            connectionString = NormalizeSqliteConnectionString(connectionString);
+            EnsureSqliteDataSourceDirectoryExists(connectionString);
             options.UseSqlite(connectionString);
+        }
+    }
+
+    private static string NormalizeSqliteConnectionString(string connectionString)
+    {
+        var builder = new SqliteConnectionStringBuilder(connectionString);
+        if (!string.IsNullOrWhiteSpace(builder.DataSource))
+        {
+            var dataSource = builder.DataSource.Trim();
+            if (Path.IsPathRooted(dataSource) && !OperatingSystem.IsWindows())
+            {
+                return builder.ToString();
+            }
+
+            if (OperatingSystem.IsWindows() && dataSource.StartsWith("/", StringComparison.Ordinal))
+            {
+                var fileName = Path.GetFileName(dataSource);
+                var fallbackDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "AspireApp1");
+                Directory.CreateDirectory(fallbackDir);
+                builder.DataSource = Path.Combine(fallbackDir, string.IsNullOrWhiteSpace(fileName) ? "statestore.db" : fileName);
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static void EnsureSqliteDataSourceDirectoryExists(string connectionString)
+    {
+        var builder = new SqliteConnectionStringBuilder(connectionString);
+        var dataSource = builder.DataSource;
+        if (string.IsNullOrWhiteSpace(dataSource))
+        {
+            return;
+        }
+
+        var fullPath = Path.GetFullPath(dataSource);
+        var directory = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
         }
     }
 }

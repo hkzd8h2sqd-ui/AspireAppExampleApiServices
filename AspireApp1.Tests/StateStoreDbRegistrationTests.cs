@@ -1,4 +1,5 @@
 using AspireApp1.StateStore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 
 namespace AspireApp1.Tests;
@@ -32,5 +33,30 @@ public class StateStoreDbRegistrationTests
 
         StringAssert.Contains(connectionString, "Server=.");
         StringAssert.Contains(connectionString, "Database=AspireApp1StateStore");
+    }
+
+    [TestMethod]
+    public async Task AddConfiguredStateStoreDbContext_WithSqlitePath_CreatesDatabaseFile()
+    {
+        var dbDir = Path.Combine(Path.GetTempPath(), "AspireApp1Tests", Guid.NewGuid().ToString("N"));
+        var dbPath = Path.Combine(dbDir, "statestore.db");
+
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["StateStore:Provider"] = "Sqlite",
+                ["ConnectionStrings:statestore"] = $"Data Source={dbPath}"
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddConfiguredStateStoreDbContext(configuration);
+        await using var provider = services.BuildServiceProvider();
+        await using var scope = provider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<StateStoreDbContext>();
+
+        await DatabaseInitializer.EnsureSchemaAsync(db);
+
+        Assert.IsTrue(File.Exists(dbPath));
     }
 }
