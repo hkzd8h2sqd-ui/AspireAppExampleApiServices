@@ -83,14 +83,16 @@ public static class DatabaseInitializer
             """, cancellationToken);
 
         // Schema evolution: add RetryAttempt and MaxRetries columns to FlowStepRecords
-        // (idempotent — ALTER TABLE ADD COLUMN is a no-op if the column already exists in SQLite)
+        // Hard-coded DDL statements (not parameterizable, and identifiers are not user-provided)
         try
         {
             await db.Database.ExecuteSqlRawAsync(
                 "ALTER TABLE \"FlowStepRecords\" ADD COLUMN \"RetryAttempt\" INTEGER NOT NULL DEFAULT 0;",
                 cancellationToken);
         }
-        catch (Exception ex) when (ex.Message.Contains("duplicate column name"))
+        catch (Exception ex) when (ex.InnerException?.Message.Contains("duplicate column") == true || 
+                                   ex.Message.Contains("duplicate column") ||
+                                   ex.Message.Contains("already exists"))
         {
             // Column already exists — safe to ignore
         }
@@ -101,7 +103,9 @@ public static class DatabaseInitializer
                 "ALTER TABLE \"FlowStepRecords\" ADD COLUMN \"MaxRetries\" INTEGER NOT NULL DEFAULT 0;",
                 cancellationToken);
         }
-        catch (Exception ex) when (ex.Message.Contains("duplicate column name"))
+        catch (Exception ex) when (ex.InnerException?.Message.Contains("duplicate column") == true || 
+                                   ex.Message.Contains("duplicate column") ||
+                                   ex.Message.Contains("already exists"))
         {
             // Column already exists — safe to ignore
         }
