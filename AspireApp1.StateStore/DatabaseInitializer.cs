@@ -105,6 +105,9 @@ public static class DatabaseInitializer
             cancellationToken);
     }
 
+    /// <summary>
+    /// Creates the full schema if the database is new; no-op if it already exists
+    /// </summary>
     private static async Task EnsureDatabaseCreatedAsync(
         StateStoreDbContext db,
         CancellationToken cancellationToken)

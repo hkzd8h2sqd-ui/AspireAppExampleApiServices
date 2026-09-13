@@ -27,11 +27,6 @@ builder.Services.AddHttpClient("workerservice1", client =>
     client.BaseAddress = new Uri("https+http://workerservice1");
 });
 
-builder.Services.AddHttpClient("webfrontend", client =>
-{
-    client.BaseAddress = new Uri("https+http://webfrontend");
-});
-
 builder.Services.AddConfiguredStateStoreDbContextFactory(builder.Configuration);
 
 // TraceQueryService builds TraceModel objects from state-store records written by the worker services.
