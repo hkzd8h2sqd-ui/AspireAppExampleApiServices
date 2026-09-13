@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using AspireApp1.ServiceDefaults;
 using AspireApp1.StateStore;
 using AspireApp1.WorkerService2;
 using Microsoft.EntityFrameworkCore;
@@ -9,6 +10,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 builder.Services.AddProblemDetails();
+builder.Services.Configure<FlowSimulationSettings>(builder.Configuration.GetSection(FlowSimulationSettings.SectionName));
 builder.Services.AddSingleton<WorkerJobQueue>();
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddHttpClient("apiservicestaticweather", client =>
@@ -99,8 +101,10 @@ app.MapPost("/flow/retry-demo/step", (
     IServiceScopeFactory scopeFactory,
     IHttpClientFactory httpClientFactory,
     ILogger<Program> logger,
-    IHostEnvironment hostEnvironment) =>
+    IHostEnvironment hostEnvironment,
+    Microsoft.Extensions.Options.IOptions<FlowSimulationSettings> simulationOptions) =>
 {
+    var simulationSettings = FlowSimulationPlanner.Normalize(simulationOptions.Value);
     var capturedTraceParent = Activity.Current?.Id ?? message.TraceParent;
     var capturedTraceState = Activity.Current?.TraceStateString ?? message.TraceState;
 
@@ -109,7 +113,7 @@ app.MapPost("/flow/retry-demo/step", (
         try
         {
             await ExecuteRetryStep2Async(message, capturedTraceParent, capturedTraceState,
-                scopeFactory, httpClientFactory, logger, hostEnvironment, flowActivitySource);
+                scopeFactory, httpClientFactory, logger, hostEnvironment, flowActivitySource, simulationSettings);
         }
         catch (Exception ex)
         {
@@ -270,15 +274,16 @@ static async Task ExecuteRetryStep2Async(
     IHttpClientFactory httpClientFactory,
     ILogger logger,
     IHostEnvironment hostEnvironment,
-    ActivitySource activitySource)
+    ActivitySource activitySource,
+    FlowSimulationSettings simulationSettings)
 {
     if (!WorkerTraceContext.TryParse(traceParent, traceState, out var parentContext))
     {
         parentContext = default;
     }
 
-    const int maxAttempts = 3;
-    const int retryDelaySeconds = 10;
+    var maxAttempts = simulationSettings.RetryAttempts;
+    var retryDelay = TimeSpan.FromMilliseconds(simulationSettings.RetryDelayMs);
 
     string? lastError = null;
     string? traceId = null;
@@ -296,23 +301,19 @@ static async Task ExecuteRetryStep2Async(
         logger.LogInformation("RetryDemo step 2 attempt {attempt}/{max_attempts}. flow_run_id={flow_run_id} trace_id={trace_id} correlation_id={correlation_id} service.name={service_name} timestamp_utc={timestamp_utc}",
             attempt, maxAttempts, message.FlowRunId, traceId, message.CorrelationId, hostEnvironment.ApplicationName, DateTimeOffset.UtcNow);
 
-        if (attempt < maxAttempts)
-        {
-            lastError = $"Simulerat fel (försök {attempt}/{maxAttempts}) – återförsök om {retryDelaySeconds} s";
-            stepActivity?.SetStatus(ActivityStatusCode.Error, lastError);
-
-            logger.LogWarning("RetryDemo step 2 intentional failure on attempt {attempt}/{max_attempts}. error={error} flow_run_id={flow_run_id} trace_id={trace_id} correlation_id={correlation_id} timestamp_utc={timestamp_utc}",
-                attempt, maxAttempts, lastError, message.FlowRunId, traceId, message.CorrelationId, DateTimeOffset.UtcNow);
-
-            await UpdateRetryFlowStepAsync(message.FlowRunId, "RetryStep2.Process", FlowStepStatus.Retrying,
-                traceId, spanId, attempt, maxAttempts, lastError, null, scopeFactory, logger);
-
-            await Task.Delay(TimeSpan.FromSeconds(retryDelaySeconds));
-            continue;
-        }
-
         try
         {
+            var plan = FlowSimulationPlanner.CreateAttemptPlan(simulationSettings, message.FlowRunId, "RetryStep2.Process", attempt);
+            if (plan.DelayMs > 0)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(plan.DelayMs));
+            }
+
+            if (plan.ShouldFailWithHttp500)
+            {
+                throw new HttpRequestException("Simulerat HTTP 500-fel i RetryStep2.Process");
+            }
+
             var weatherClient = httpClientFactory.CreateClient("apiservicestaticweather");
             var response = await weatherClient.GetAsync("/infoweather");
             lastError = response.IsSuccessStatusCode ? null : $"HTTP {(int)response.StatusCode} from /infoweather";
@@ -324,6 +325,14 @@ static async Task ExecuteRetryStep2Async(
         {
             stepActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             lastError = ex.Message;
+        }
+
+        if (lastError is not null && attempt < maxAttempts)
+        {
+            await UpdateRetryFlowStepAsync(message.FlowRunId, "RetryStep2.Process", FlowStepStatus.Retrying,
+                traceId, spanId, attempt, maxAttempts, lastError, null, scopeFactory, logger);
+            await Task.Delay(retryDelay);
+            continue;
         }
 
         await UpdateRetryFlowStepAsync(message.FlowRunId, "RetryStep2.Process",
@@ -346,14 +355,44 @@ static async Task ExecuteRetryStep2Async(
                 using var content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json");
                 var ws3Resp = await ws3Client.PostAsync("/flow/retry-demo/step", content);
                 if (!ws3Resp.IsSuccessStatusCode)
+                {
+                    var forwardError = $"HTTP {(int)ws3Resp.StatusCode} from workerservice3 /flow/retry-demo/step";
                     logger.LogWarning("Failed to forward retry-demo step to workerservice3. status_code={status_code} flow_run_id={flow_run_id}", ws3Resp.StatusCode, message.FlowRunId);
+                    await MarkFlowRunFailedAsync(message.FlowRunId, forwardError, scopeFactory, logger);
+                }
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Exception forwarding retry-demo step to workerservice3. flow_run_id={flow_run_id}", message.FlowRunId);
+                await MarkFlowRunFailedAsync(message.FlowRunId, ex.Message, scopeFactory, logger);
             }
         }
+        else
+        {
+            await MarkFlowRunFailedAsync(message.FlowRunId, lastError, scopeFactory, logger);
+        }
         return;
+    }
+}
+
+static async Task MarkFlowRunFailedAsync(string flowRunId, string? errorMessage, IServiceScopeFactory scopeFactory, ILogger logger)
+{
+    try
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<StateStoreDbContext>();
+        var flowRun = await db.FlowRunRecords.FirstOrDefaultAsync(r => r.FlowRunId == flowRunId);
+        if (flowRun is not null)
+        {
+            flowRun.Status = FlowRunStatus.Failed;
+            flowRun.CompletedAt = DateTimeOffset.UtcNow;
+            flowRun.ErrorMessage = errorMessage;
+            await db.SaveChangesAsync();
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Failed to mark flow run as failed. flow_run_id={flow_run_id}", flowRunId);
     }
 }
 

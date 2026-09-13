@@ -12,9 +12,10 @@
 
 <h1>Återförsöksflöde</h1>
 <p class="lead text-muted">
-    Demonstrerar distribuerade återförsök: varje steg misslyckas <strong>två gånger</strong> med ett simulerat fel och
-    lyckas sedan på <strong>tredje försöket</strong>. Hela körningen tar ca&nbsp;1 minut.
-    Sök sedan på TraceId eller CorrelationId i Processflöde för att se alla felaktiga och lyckade span.
+    Demonstrerar distribuerade återförsök med konfigurerbar simulering i varje nivå (WS1→WS2→WS3):
+    <strong>1–3 försök</strong>, normala svarstider <strong>10–500 ms</strong>, intermittenta långsamma svar
+    <strong>5 000–30 000 ms</strong> och simulerade <strong>HTTP 500-fel</strong>.
+    Sök på TraceId eller CorrelationId i Processflöde för att se retry, långsamma körningar och slutliga fel.
 </p>
 
 <!-- Architecture / retry diagram -->
@@ -24,25 +25,25 @@
             <span class="badge bg-primary px-2 py-1">Web → /flow/retry-demo/start</span>
             <span>→</span>
             <div class="d-flex flex-column align-items-center gap-1">
-                <span class="badge bg-danger px-2 py-1">WS1 ❌ försök 1</span>
-                <span class="badge bg-danger px-2 py-1">WS1 ❌ försök 2</span>
-                <span class="badge bg-success px-2 py-1">WS1 ✅ försök 3</span>
+                <span class="badge bg-secondary px-2 py-1">WS1 försök 1–3</span>
+                <span class="badge bg-warning text-dark px-2 py-1">10–500 ms / 5–30 s</span>
+                <span class="badge bg-danger px-2 py-1">Intermittent HTTP 500</span>
             </div>
             <span>⇢</span>
             <div class="d-flex flex-column align-items-center gap-1">
-                <span class="badge bg-danger px-2 py-1">WS2 ❌ försök 1</span>
-                <span class="badge bg-danger px-2 py-1">WS2 ❌ försök 2</span>
-                <span class="badge bg-success px-2 py-1">WS2 ✅ försök 3</span>
+                <span class="badge bg-secondary px-2 py-1">WS2 försök 1–3</span>
+                <span class="badge bg-warning text-dark px-2 py-1">10–500 ms / 5–30 s</span>
+                <span class="badge bg-danger px-2 py-1">Intermittent HTTP 500</span>
             </div>
             <span>⇢</span>
             <div class="d-flex flex-column align-items-center gap-1">
-                <span class="badge bg-danger px-2 py-1">WS3 ❌ försök 1</span>
-                <span class="badge bg-danger px-2 py-1">WS3 ❌ försök 2</span>
-                <span class="badge bg-success px-2 py-1">WS3 ✅ försök 3</span>
+                <span class="badge bg-secondary px-2 py-1">WS3 försök 1–3</span>
+                <span class="badge bg-warning text-dark px-2 py-1">10–500 ms / 5–30 s</span>
+                <span class="badge bg-danger px-2 py-1">Intermittent HTTP 500</span>
             </div>
         </div>
         <p class="text-center text-muted small mt-2 mb-0">
-            10 s fördröjning mellan varje återförsök per steg → ~20 s per steg → ~60 s totalt.
+            Beteendet styrs via konfiguration i <code>FlowSimulation</code> i WorkerService1/2/3 appsettings.
         </p>
     </div>
 </div>
@@ -62,7 +63,7 @@
         else
         {
             <span class="bi bi-arrow-repeat me-1" aria-hidden="true"></span>
-            <span>Starta återförsöksflöde (~60 s)</span>
+            <span>Starta återförsöksflöde</span>
         }
     </button>
 </div>
@@ -173,8 +174,8 @@
     @if (_flowStatus is "Completed" or "Failed")
     {
         <div class="alert @(_flowStatus == "Completed" ? "alert-success" : "alert-warning") mt-2">
-            <strong>@(_flowStatus == "Completed" ? "✅ Flödet är klart – alla tre steg lyckades på tredje försöket!" : "⚠️ Flödet avslutades med fel.")</strong>
-            Sök i Processflöde för att visualisera alla återförsöks-span:
+            <strong>@(_flowStatus == "Completed" ? "✅ Flödet är klart." : "⚠️ Flödet avslutades med fel efter uttömda återförsök.")</strong>
+            Sök i Processflöde för att visualisera alla span för återförsök, fördröjningar och fel:
             <div class="mt-2 d-flex flex-wrap gap-2">
                 @if (_correlationId is not null)
                 {
