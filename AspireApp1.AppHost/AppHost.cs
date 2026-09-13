@@ -1,4 +1,7 @@
 ﻿using Microsoft.Extensions.Configuration;
+using System.Diagnostics;
+
+EnsureAspireEndpointPortsAreAvailable();
 
 var builder = DistributedApplication.CreateBuilder(args);
 
@@ -126,3 +129,109 @@ webFrontend.WithReference(workerService1);
 workerService4.WithReference(webFrontend).WaitFor(webFrontend);
 
 builder.Build().Run();
+
+static void EnsureAspireEndpointPortsAreAvailable()
+{
+    const string resourceServiceEndpoint = "ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL";
+    const string dashboardOtlpEndpoint = "ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL";
+    const string dashboardMcpEndpoint = "ASPIRE_DASHBOARD_MCP_ENDPOINT_URL";
+
+    ReleaseConflictingEndpoint(resourceServiceEndpoint);
+    ReleaseConflictingEndpoint(dashboardOtlpEndpoint);
+    ReleaseConflictingEndpoint(dashboardMcpEndpoint);
+}
+
+static void ReleaseConflictingEndpoint(string environmentVariableName)
+{
+    var endpointValue = Environment.GetEnvironmentVariable(environmentVariableName);
+    if (string.IsNullOrWhiteSpace(endpointValue) || !Uri.TryCreate(endpointValue, UriKind.Absolute, out var endpointUri))
+    {
+        return;
+    }
+
+    if (!TryFindListeningProcess(endpointUri.Port, out var processId, out var processName, out var processPath))
+    {
+        return;
+    }
+
+    Console.WriteLine($"[AppHost preflight] Port conflict for {environmentVariableName}={endpointValue}. " +
+                      $"Port {endpointUri.Port} is already used by PID {processId} ({processName}) at '{processPath}'. " +
+                      $"Clearing {environmentVariableName} so Aspire can choose a free port.");
+
+    Environment.SetEnvironmentVariable(environmentVariableName, null);
+}
+
+static bool TryFindListeningProcess(int port, out int processId, out string processName, out string processPath)
+{
+    processId = 0;
+    processName = "unknown";
+    processPath = "unknown";
+
+    if (!OperatingSystem.IsWindows())
+    {
+        return false;
+    }
+
+    using var netstatProcess = new Process
+    {
+        StartInfo = new ProcessStartInfo
+        {
+            FileName = "netstat",
+            Arguments = "-ano -p tcp",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        }
+    };
+
+    netstatProcess.Start();
+    var output = netstatProcess.StandardOutput.ReadToEnd();
+    netstatProcess.WaitForExit();
+
+    foreach (var line in output.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (!line.StartsWith("TCP", StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 5 || !parts[3].Equals("LISTENING", StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        var localAddress = parts[1];
+        var separatorIndex = localAddress.LastIndexOf(':');
+        if (separatorIndex < 0)
+        {
+            continue;
+        }
+
+        if (!int.TryParse(localAddress[(separatorIndex + 1)..], out var listeningPort) || listeningPort != port)
+        {
+            continue;
+        }
+
+        if (!int.TryParse(parts[4], out processId))
+        {
+            return false;
+        }
+
+        try
+        {
+            var process = Process.GetProcessById(processId);
+            processName = process.ProcessName;
+            processPath = process.MainModule?.FileName ?? "unknown";
+        }
+        catch
+        {
+            // keep defaults when process metadata is unavailable
+        }
+
+        return true;
+    }
+
+    return false;
+}
