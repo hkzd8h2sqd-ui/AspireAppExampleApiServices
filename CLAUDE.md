@@ -1,4 +1,4 @@
-# CLAUDE.md — Arkitekturöversikt för AspireApp1
+﻿# CLAUDE.md — Arkitekturöversikt för AspireApp1
 
 Detta dokument beskriver hur hela lösningen hänger ihop: tjänster, dataflöden, spårning och felsökning.
 
@@ -112,3 +112,6 @@ Databasen/schema skapas automatiskt vid startup om den saknas.
 - `AspireApp1.Web/Components/Pages/Home.razor`
 - `AspireApp1.Web/Components/Pages/FlowRuns.razor`
 - `AspireApp1.Web/Components/Pages/ProcessFlow.razor`
+
+## 10) Kommentarer i koden
+Kommentera gärna publika och privata metoder med syfte, parametrar och returvärden. Använd XML-kommentarer (summary och remarks) för att kunna generera dokumentation.
