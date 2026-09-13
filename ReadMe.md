@@ -7,6 +7,12 @@ To get started with the AspireApp1 example project, follow these steps:
 1. Clone the repository
 2. Run the application `AspireApp1.AppHost` to start the server
 
+## Arkitekturöversikt
+
+För en samlad helhetsbeskrivning av hur alla tjänster, flöden, spårning och datalagring hänger ihop, se:
+
+- [CLAUDE.md](CLAUDE.md)
+
 ## DIGG + W3C Trace Context (spårbarhet)
 - Tjänsterna använder W3C Trace Context (`traceparent`, `tracestate`) via .NET `Activity`/OpenTelemetry.
 - `trace_id`, `span_id`, `service.name`, `timestamp_utc` och `correlation_id` loggas strukturerat.
@@ -19,7 +25,12 @@ To get started with the AspireApp1 example project, follow these steps:
 1. Starta `AspireApp1.AppHost`.
 2. Kör anrop från `webfrontend` till backend (exempel: väderflödet).
 3. Öppna trace-vyn i Aspire dashboard och följ samma `trace_id` genom tjänstekedjan.
-4. Kontrollera worker-loggar för samma `trace_id` och `correlation_id` vid async-jobb/retry/finalt fel.
+4. På sidan **Processflöde** kan du söka med:
+   - ren `trace_id` (32 hex-tecken)
+   - full `traceparent` (`00-<trace_id>-<span_id>-<flags>`)
+   - Aspire URL-format, t.ex. `https://.../traces/detail/<trace_id>`
+5. Processflöde visar stegindikering i formatet **Steg X/N** samt markerar var flödet fastnat med tjänst och felorsak.
+6. Kontrollera worker-loggar för samma `trace_id` och `correlation_id` vid async-jobb/retry/finalt fel.
 
 ## Frontend-visualisering av processflöde
 
@@ -27,3 +38,36 @@ För krav, specifikation och implementationsplan gällande frontend-visualiserin
 
 - [Kravspecifikation: Frontend-visualisering av processflöde](docs/kravspecifikation-frontend-processflode.md)
 - [Implementationsplan: Frontend-visualisering av processflöde](docs/implementationsplan-frontend-processflode.md)
+
+## StateStore databas (SQLite eller SQL Server)
+
+StateStore kan köras med både SQLite och SQL Server via konfiguration i `AspireApp1.AppHost/appsettings.Development.json` (globalt för hela lösningen).
+
+```json
+{
+  "StateStore": {
+    "Provider": "SqlServer"
+  },
+  "ConnectionStrings": {
+    "statestoreSqlServer": "Server=.;Database=AspireApp1StateStore;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True"
+  }
+}
+```
+
+- **Default är `Provider = "SqlServer"`**
+- `Provider = "SqlServer"` använder `ConnectionStrings:statestoreSqlServer`
+- `Provider = "Sqlite"` använder delad fil i LocalApplicationData (sätts i AppHost om `ConnectionStrings:statestore` saknas)
+- Databasen och tabellerna skapas automatiskt vid uppstart om de saknas (gäller både SQL Server och SQLite)
+- AppHost skickar alltid båda nycklarna till tjänsterna:
+  - `ConnectionStrings:statestore` = SQLite-anslutning
+  - `ConnectionStrings:statestoreSqlServer` = SQL Server-anslutning
+
+### Så växlar du provider
+1. Öppna `AspireApp1.AppHost/appsettings.Development.json`.
+2. Sätt `StateStore:Provider` till `Sqlite` eller `SqlServer`.
+3. Kontrollera att motsvarande connection string är satt.
+4. Starta om `AspireApp1.AppHost`.
+
+Startsidan i frontend visar nu aktiv provider under rubriken **Aktiv StateStore DB**.
+
+Sidan `/flowruns` visar alla senaste flödeskörningar och länkar vidare till `/processflow`.

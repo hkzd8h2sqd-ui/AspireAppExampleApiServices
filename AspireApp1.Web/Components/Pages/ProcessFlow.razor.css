@@ -1,0 +1,63 @@
+.step-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.step-tree {
+    display: grid;
+    gap: 0.2rem;
+}
+
+.span-row-enhanced {
+    transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease, transform 120ms ease;
+    background-color: var(--bs-body-bg);
+}
+
+.span-row-enhanced:hover {
+    border-color: rgba(13, 110, 253, 0.35) !important;
+    background-color: rgba(13, 110, 253, 0.04);
+    transform: translateY(-1px);
+}
+
+.span-row-open {
+    border-color: rgba(13, 110, 253, 0.65) !important;
+    box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.14);
+}
+
+.span-row-header {
+    min-height: 2rem;
+}
+
+.span-row-selected {
+    border-color: rgba(13, 110, 253, 0.8) !important;
+}
+
+.span-row-highlight {
+    background-color: rgba(13, 110, 253, 0.15);
+}
+
+.span-row-error {
+    background-color: rgba(220, 53, 69, 0.06);
+}
+
+.span-row-warning {
+    background-color: rgba(255, 193, 7, 0.12);
+}
+
+.span-row-progress {
+    background-color: rgba(13, 202, 240, 0.08);
+}
+
+.span-inline-details {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition: max-height 220ms ease, opacity 200ms ease;
+}
+
+.span-inline-details.open {
+    max-height: 26rem;
+    opacity: 1;
+}

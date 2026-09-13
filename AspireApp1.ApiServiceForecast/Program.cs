@@ -37,9 +37,7 @@ builder.Services.AddHttpClient("workerservice1", client =>
 });
 
 // State store — used to persist SpanRecords for ProcessFlow visibility
-builder.Services.AddDbContext<StateStoreDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("statestore")
-        ?? $"Data Source={Path.Combine(Path.GetTempPath(), "AspireApp1StateStore", "statestore.db")}"));
+builder.Services.AddConfiguredStateStoreDbContext(builder.Configuration);
 
 var app = builder.Build();
 

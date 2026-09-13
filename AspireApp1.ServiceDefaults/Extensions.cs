@@ -63,12 +63,14 @@ public static class Extensions
             })
             .WithTracing(tracing =>
             {
-                tracing.AddSource(builder.Environment.ApplicationName)
+                tracing.SetSampler(new BlazorComponentHubSampler())
+                    .AddSource(builder.Environment.ApplicationName)
                     .AddAspNetCoreInstrumentation(tracing =>
                         // Exclude health check requests from tracing
                         tracing.Filter = context =>
                             !context.Request.Path.StartsWithSegments(HealthEndpointPath)
                             && !context.Request.Path.StartsWithSegments(AlivenessEndpointPath)
+                            && !context.Request.Path.StartsWithSegments("/_blazor")
                     )
                     // Uncomment the following line to enable gRPC instrumentation (requires the OpenTelemetry.Instrumentation.GrpcNetClient package)
                     //.AddGrpcClientInstrumentation()
@@ -78,6 +80,81 @@ public static class Extensions
         builder.AddOpenTelemetryExporters();
 
         return builder;
+    }
+
+    private sealed class BlazorComponentHubSampler : Sampler
+    {
+        private static readonly string[] StaticAssetExtensions =
+        [
+            ".css", ".js", ".map", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2"
+        ];
+
+        public override SamplingResult ShouldSample(in SamplingParameters samplingParameters)
+        {
+            if (ShouldDropByName(samplingParameters.Name))
+            {
+                return new SamplingResult(SamplingDecision.Drop);
+            }
+
+            if (samplingParameters.Kind == ActivityKind.Server
+                && TryGetRequestPath(samplingParameters.Tags, out var path))
+            {
+                if (path.StartsWith("/_blazor", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith("/_framework", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith("/_content", StringComparison.OrdinalIgnoreCase)
+                    || IsStaticAssetPath(path))
+                {
+                    return new SamplingResult(SamplingDecision.Drop);
+                }
+            }
+
+            return new SamplingResult(SamplingDecision.RecordAndSample);
+        }
+
+        private static bool ShouldDropByName(string activityName)
+        {
+            return activityName.StartsWith("Microsoft.AspNetCore.Components.Server.ComponentHub/", StringComparison.Ordinal)
+                || activityName.StartsWith("Route -> ", StringComparison.Ordinal);
+        }
+
+        private static bool TryGetRequestPath(IEnumerable<KeyValuePair<string, object?>>? tags, out string path)
+        {
+            if (tags is null)
+            {
+                path = string.Empty;
+                return false;
+            }
+
+            foreach (var (key, value) in tags)
+            {
+                if (value is not string stringValue)
+                {
+                    continue;
+                }
+
+                if (key is "url.path" or "http.target" or "http.route")
+                {
+                    path = stringValue;
+                    return true;
+                }
+            }
+
+            path = string.Empty;
+            return false;
+        }
+
+        private static bool IsStaticAssetPath(string path)
+        {
+            foreach (var extension in StaticAssetExtensions)
+            {
+                if (path.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 
     private static TBuilder AddOpenTelemetryExporters<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder

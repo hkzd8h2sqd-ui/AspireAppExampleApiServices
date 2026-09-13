@@ -1,8 +1,11 @@
 ﻿@page "/"
 @rendermode InteractiveServer
+@implements IDisposable
 @using AspireApp1.StateStore
+@using AspireApp1.Web.Models
 @using Microsoft.EntityFrameworkCore
-@inject StateStoreDbContext Db
+@inject IDbContextFactory<StateStoreDbContext> DbFactory
+@inject IConfiguration Configuration
 @inject ILogger<Home> Logger
 
 <PageTitle>AspireApp1 – Demo Dashboard</PageTitle>
@@ -11,6 +14,11 @@
 <p class="lead text-muted mb-4">
     En Aspire-baserad mikrotjänstdemonstration med distribuerad telemetri, processflödesvisualisering och worker-kedjor.
 </p>
+<div class="alert alert-secondary py-2 px-3 mb-4">
+    <strong>Aktiv StateStore DB:</strong>
+    <span class="ms-1 badge @GetDbProviderBadgeClass(_dbProviderDisplay)">@_dbProviderDisplay</span>
+    <span class="ms-2 text-muted small">@_dbProviderDetail</span>
+</div>
 
 <!-- Quick actions -->
 <div class="row g-3 mb-5">
@@ -58,42 +66,69 @@
 
 <!-- Architecture overview -->
 <div class="card mb-4">
-    <div class="card-header fw-semibold">Tjänstarkitektur</div>
+    <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+        <span>Tjänstarkitektur &amp; tjänstehälsa</span>
+        <small class="text-muted">Hälsa auto-uppdateras var 5:e sekund</small>
+    </div>
     <div class="card-body">
         <div class="d-flex flex-wrap gap-2 align-items-center justify-content-center">
             <div class="text-center">
                 <div class="badge bg-primary fs-6 px-3 py-2">Web Frontend</div>
                 <div class="text-muted small mt-1">Blazor Server</div>
+                <div class="small mt-1">
+                    <span class="@GetArchitectureHealthBadgeClass("webfrontend")">@GetArchitectureHealthText("webfrontend")</span>
+                </div>
             </div>
             <span class="text-muted fs-4">↕</span>
             <div class="text-center">
                 <div class="badge bg-secondary fs-6 px-3 py-2">ApiService</div>
                 <div class="text-muted small mt-1">Weather &amp; Forecast</div>
+                <div class="small mt-1">
+                    <span class="@GetArchitectureHealthBadgeClass("apiservice")">@GetArchitectureHealthText("apiservice")</span>
+                </div>
             </div>
             <span class="text-muted fs-4">↔</span>
             <div class="text-center">
                 <div class="badge bg-secondary fs-6 px-3 py-2">ApiServiceForecast</div>
                 <div class="text-muted small mt-1">Forecast + queue</div>
+                <div class="small mt-1">
+                    <span class="@GetArchitectureHealthBadgeClass("apiserviceforecast")">@GetArchitectureHealthText("apiserviceforecast")</span>
+                </div>
             </div>
             <span class="text-muted fs-4">↔</span>
             <div class="text-center">
                 <div class="badge bg-info text-dark fs-6 px-3 py-2">WorkerService 1</div>
                 <div class="text-muted small mt-1">Job consumer</div>
+                <div class="small mt-1">
+                    <span class="@GetArchitectureHealthBadgeClass("workerservice1")">@GetArchitectureHealthText("workerservice1")</span>
+                </div>
             </div>
             <span class="text-muted fs-4">→</span>
             <div class="text-center">
                 <div class="badge bg-info text-dark fs-6 px-3 py-2">WorkerService 2</div>
                 <div class="text-muted small mt-1">Chain step 2</div>
+                <div class="small mt-1">
+                    <span class="@GetArchitectureHealthBadgeClass("workerservice2")">@GetArchitectureHealthText("workerservice2")</span>
+                </div>
             </div>
             <span class="text-muted fs-4">→</span>
             <div class="text-center">
                 <div class="badge bg-info text-dark fs-6 px-3 py-2">WorkerService 3</div>
                 <div class="text-muted small mt-1">Chain step 3</div>
+                <div class="small mt-1">
+                    <span class="@GetArchitectureHealthBadgeClass("workerservice3")">@GetArchitectureHealthText("workerservice3")</span>
+                </div>
             </div>
         </div>
         <p class="text-muted small text-center mt-2 mb-0">
-            WorkerService&nbsp;4 övervakar WS1–WS3 periodiskt. Alla tjänster skriver telemetri till SQLite-tillståndslagret.
+            WorkerService&nbsp;4 övervakar tjänsterna periodiskt via deras /health-endpoint. Alla tjänster skriver telemetri till StateStore-databasen.
         </p>
+        <div class="d-flex flex-wrap gap-2 justify-content-center mt-2">
+            <span class="badge bg-success">✅ OK</span>
+            <span class="badge bg-warning text-dark">⚠️ Varning</span>
+            <span class="badge bg-danger">❌ Error</span>
+            <span class="badge bg-secondary">ℹ️ Ej övervakad</span>
+        </div>
     </div>
 </div>
 
@@ -132,27 +167,245 @@
     </div>
 </div>
 
+<div class="card mt-4">
+    <div class="card-header fw-semibold">Senaste körningar</div>
+    <div class="card-body">
+        @if (_latestRuns.Count == 0)
+        {
+            <div class="text-muted small">Inga körningar registrerade ännu.</div>
+        }
+        else
+        {
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <span class="badge bg-primary">Pågår: @_runningCount</span>
+                <span class="badge bg-success">Klar: @_completedCount</span>
+                <span class="badge bg-danger">Fel: @_failedCount</span>
+                <span class="badge bg-secondary">Väntar: @_waitingCount</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Flöde</th>
+                            <th>Status</th>
+                            <th>Steg</th>
+                            <th>Tjänst</th>
+                            <th>Start</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var run in _latestRuns)
+                        {
+                            <tr>
+                                <td class="small">@run.FlowName</td>
+                                <td>
+                                    <span class="badge @GetStatusBadge(run.Status)" title="@GetStatusDescription(run)">@run.Status</span>
+                                    <span class="visually-hidden">@GetStatusDescription(run)</span>
+                                </td>
+                                <td class="small">Steg @run.CurrentStep/@run.TotalSteps</td>
+                                <td class="small">@run.CurrentService</td>
+                                <td class="small text-muted">@run.StartedAt.ToString("HH:mm:ss")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="mt-3">
+                <a class="btn btn-outline-secondary btn-sm" href="/flowruns">Visa alla körningar →</a>
+            </div>
+        }
+    </div>
+</div>
+
 @code {
     private bool _statsLoaded;
     private int _jobCount;
     private int _flowRunCount;
     private int _spanCount;
     private int _healthCheckCount;
+    private int _runningCount;
+    private int _completedCount;
+    private int _failedCount;
+    private int _waitingCount;
+    private bool _isDisposed;
+    private string _dbProviderDisplay = "SQL Server";
+    private string _dbProviderDetail = "ConnectionStrings:statestoreSqlServer";
+    private List<FlowRunOverview> _latestRuns = [];
+    private Dictionary<string, ServiceHealthOverview> _serviceHealthByService = new(StringComparer.OrdinalIgnoreCase);
+    private System.Threading.Timer? _refreshTimer;
 
     protected override async Task OnInitializedAsync()
     {
+        await RefreshAsync();
+        StartRefreshTimer();
+    }
+
+    private void StartRefreshTimer()
+    {
+        _refreshTimer?.Dispose();
+        _refreshTimer = new System.Threading.Timer(
+            _ => InvokeAsync(RefreshAsync),
+            null,
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(5));
+    }
+
+    private async Task RefreshAsync()
+    {
         try
         {
-            _jobCount = await Db.JobStates.CountAsync();
-            _flowRunCount = await Db.FlowRunRecords.CountAsync();
-            _spanCount = await Db.SpanRecords.CountAsync();
-            _healthCheckCount = await Db.ServiceHealthRecords.CountAsync();
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var provider = StateStoreDbRegistration.ResolveProvider(Configuration);
+            _dbProviderDisplay = provider == "sqlserver" ? "SQL Server" : "SQLite";
+            _dbProviderDetail = GetDbProviderDetail(provider);
+
+            _jobCount = await db.JobStates.CountAsync();
+            _flowRunCount = await db.FlowRunRecords.CountAsync();
+            _spanCount = await db.SpanRecords.CountAsync();
+            _healthCheckCount = await db.ServiceHealthRecords.CountAsync();
+
+            var latestFlowRuns = await db.FlowRunRecords
+                .OrderByDescending(r => r.StartedAt)
+                .Take(8)
+                .ToListAsync();
+
+            var flowRunIds = latestFlowRuns.Select(r => r.FlowRunId).ToList();
+            var allSteps = flowRunIds.Count > 0
+                ? await db.FlowStepRecords
+                    .Where(s => flowRunIds.Contains(s.FlowRunId))
+                    .ToListAsync()
+                : [];
+
+            _latestRuns = latestFlowRuns.Select(run =>
+            {
+                var flowState = FlowRunStateCalculator.Build(run, allSteps);
+
+                return new FlowRunOverview
+                {
+                    FlowName = flowState.FlowName,
+                    Status = flowState.Status,
+                    CurrentStep = flowState.CurrentStep,
+                    TotalSteps = flowState.TotalSteps,
+                    CurrentService = flowState.CurrentService ?? "okänd",
+                    StartedAt = run.StartedAt
+                };
+            }).ToList();
+
+            _runningCount = _latestRuns.Count(r => r.Status == "Pågår");
+            _completedCount = _latestRuns.Count(r => r.Status == "Klar");
+            _failedCount = _latestRuns.Count(r => r.Status == "Fel");
+            _waitingCount = _latestRuns.Count(r => r.Status == "Väntar");
+
+            var latestHealthChecks = await db.ServiceHealthRecords
+                .OrderByDescending(h => h.CheckedAt)
+                .Take(2000)
+                .ToListAsync();
+
+            _serviceHealthByService = latestHealthChecks
+                .GroupBy(h => h.ServiceName)
+                .Select(g => g.First())
+                .Select(h => new ServiceHealthOverview
+                {
+                    ServiceName = h.ServiceName,
+                    Status = h.IsHealthy ? "OK" : h.HttpStatusCode >= 500 ? "Error" : "Varning",
+                    CheckedAt = h.CheckedAt,
+                    HttpStatusCode = h.HttpStatusCode
+                })
+                .ToDictionary(h => h.ServiceName, StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception ex)
         {
-            // DB may not be available on first run before schema initialisation completes
             Logger.LogWarning(ex, "Could not load state store stats on home page");
         }
+
         _statsLoaded = true;
+
+        if (!_isDisposed)
+        {
+            StateHasChanged();
+        }
+    }
+
+    private static string GetStatusBadge(string status) => status switch
+    {
+        "Klar" => "bg-success",
+        "Fel" => "bg-danger",
+        "Pågår" => "bg-primary",
+        "Väntar" => "bg-secondary",
+        _ => "bg-secondary"
+    };
+
+    private static string GetStatusDescription(FlowRunOverview run) =>
+        $"{run.Status}. Steg {run.CurrentStep} av {run.TotalSteps}. Aktiv tjänst: {run.CurrentService}.";
+
+    private static string GetHealthEmoji(string status) => status switch
+    {
+        "OK" => "✅",
+        "Varning" => "⚠️",
+        "Error" => "❌",
+        _ => "❓"
+    };
+
+    private static string GetHealthBadgeClass(string status) => status switch
+    {
+        "OK" => "badge bg-success",
+        "Varning" => "badge bg-warning text-dark",
+        "Error" => "badge bg-danger",
+        _ => "badge bg-secondary"
+    };
+
+    private string GetArchitectureHealthText(string serviceName) =>
+        _serviceHealthByService.TryGetValue(serviceName, out var health)
+            ? $"{GetHealthEmoji(health.Status)} {health.Status}"
+            : "ℹ️ Ej övervakad";
+
+    private string GetArchitectureHealthBadgeClass(string serviceName) =>
+        _serviceHealthByService.TryGetValue(serviceName, out var health)
+            ? GetHealthBadgeClass(health.Status)
+            : "badge bg-secondary";
+
+    private string GetDbProviderDetail(string provider)
+    {
+        if (provider == "sqlserver")
+        {
+            var sqlServerConnection = Configuration.GetConnectionString("statestoreSqlServer") ?? string.Empty;
+            var serverPart = sqlServerConnection.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault(part => part.TrimStart().StartsWith("Server=", StringComparison.OrdinalIgnoreCase));
+            return serverPart is not null ? $"{serverPart} • ConnectionStrings:statestoreSqlServer" : "ConnectionStrings:statestoreSqlServer";
+        }
+
+        return "ConnectionStrings:statestore";
+    }
+
+    private static string GetDbProviderBadgeClass(string provider) => provider switch
+    {
+        "SQL Server" => "bg-primary",
+        "SQLite" => "bg-success",
+        _ => "bg-secondary"
+    };
+
+    public void Dispose()
+    {
+        _isDisposed = true;
+        _refreshTimer?.Dispose();
+    }
+
+    private sealed class FlowRunOverview
+    {
+        public string FlowName { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public int CurrentStep { get; init; }
+        public int TotalSteps { get; init; }
+        public string CurrentService { get; init; } = string.Empty;
+        public DateTimeOffset StartedAt { get; init; }
+    }
+
+    private sealed class ServiceHealthOverview
+    {
+        public string ServiceName { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public DateTimeOffset CheckedAt { get; init; }
+        public int HttpStatusCode { get; init; }
+        public string Description => $"{Status} för {ServiceName} (HTTP {HttpStatusCode})";
     }
 }
