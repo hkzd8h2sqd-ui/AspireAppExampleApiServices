@@ -12,6 +12,7 @@ builder.AddServiceDefaults();
 builder.Services.AddProblemDetails();
 builder.Services.Configure<ServiceSettings>(builder.Configuration.GetSection(ServiceSettings.SectionName));
 builder.Services.Configure<FlowSimulationSettings>(builder.Configuration.GetSection(FlowSimulationSettings.SectionName));
+builder.Services.Configure<FlowSimulationProfiles>(builder.Configuration.GetSection(FlowSimulationProfiles.SectionName));
 builder.Services.AddSingleton<WorkerJobQueue>();
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddHostedService<PeriodicChainTrigger>();
@@ -206,18 +207,27 @@ app.MapPost("/flow/start", async (
     return Results.Ok(new FlowStartResponse(flowRunId, correlationId, traceId));
 });
 
+app.MapGet("/flow/simulation/profiles", (Microsoft.Extensions.Options.IOptions<FlowSimulationProfiles> profileOptions) =>
+{
+    var profiles = profileOptions.Value;
+    return Results.Ok(new FlowSimulationProfilesResponse(
+        RetryDemo: FlowSimulationPlanner.Normalize(profiles.RetryDemo),
+        IntermittentDemo: FlowSimulationPlanner.Normalize(profiles.IntermittentDemo)));
+});
+
 // ── Retry-demo flow trigger ──────────────────────────────────────────────
 // POST /flow/retry-demo/start
-// Starts a "RetryDemoFlow" where every step deliberately fails on the first two
-// attempts and only succeeds on the third. ~20 s per step → ~60 s total.
+// Legacy default behavior: each step fails first attempts, then succeeds on last.
 app.MapPost("/flow/retry-demo/start", async (
+    FlowStartSimulationRequest? request,
     IHttpClientFactory httpClientFactory,
     IServiceScopeFactory scopeFactory,
     ILogger<Program> logger,
     IHostEnvironment hostEnvironment,
-    Microsoft.Extensions.Options.IOptions<FlowSimulationSettings> simulationOptions) =>
+    Microsoft.Extensions.Options.IOptions<FlowSimulationProfiles> profileOptions) =>
 {
-    var simulationSettings = FlowSimulationPlanner.Normalize(simulationOptions.Value);
+    var profileDefaults = FlowSimulationPlanner.Normalize(profileOptions.Value.RetryDemo);
+    var simulationSettings = FlowSimulationPlanner.Normalize(request?.SimulationSettings ?? profileDefaults);
     var maxAttempts = simulationSettings.RetryAttempts;
     using var rootActivity = flowActivitySource.StartActivity("RetryDemoFlow.Start", ActivityKind.Server);
     var flowRunId = Guid.NewGuid().ToString("N");
@@ -261,6 +271,65 @@ app.MapPost("/flow/retry-demo/start", async (
         catch (Exception ex)
         {
             logger.LogError(ex, "RetryDemo step 1 background task failed. flow_run_id={flow_run_id}", flowRunId);
+        }
+    });
+
+    return Results.Ok(new FlowStartResponse(flowRunId, correlationId, traceId));
+});
+
+// ── Intermittent-demo flow trigger ───────────────────────────────────────
+app.MapPost("/flow/intermittent-demo/start", async (
+    FlowStartSimulationRequest? request,
+    IHttpClientFactory httpClientFactory,
+    IServiceScopeFactory scopeFactory,
+    ILogger<Program> logger,
+    IHostEnvironment hostEnvironment,
+    Microsoft.Extensions.Options.IOptions<FlowSimulationProfiles> profileOptions) =>
+{
+    var profileDefaults = FlowSimulationPlanner.Normalize(profileOptions.Value.IntermittentDemo);
+    var simulationSettings = FlowSimulationPlanner.Normalize(request?.SimulationSettings ?? profileDefaults);
+    var maxAttempts = simulationSettings.RetryAttempts;
+    using var rootActivity = flowActivitySource.StartActivity("IntermittentDemoFlow.Start", ActivityKind.Server);
+    var flowRunId = Guid.NewGuid().ToString("N");
+    var correlationId = Guid.NewGuid().ToString("N");
+    var traceId = System.Diagnostics.Activity.Current?.TraceId.ToString();
+
+    rootActivity?.SetTag("flow.run.id", flowRunId);
+    rootActivity?.SetTag("correlation.id", correlationId);
+
+    logger.LogInformation("IntermittentDemo flow start requested. flow_run_id={flow_run_id} trace_id={trace_id} correlation_id={correlation_id} service.name={service_name} timestamp_utc={timestamp_utc}",
+        flowRunId, traceId, correlationId, hostEnvironment.ApplicationName, DateTimeOffset.UtcNow);
+
+    await using (var scope = scopeFactory.CreateAsyncScope())
+    {
+        var db = scope.ServiceProvider.GetRequiredService<StateStoreDbContext>();
+        db.FlowRunRecords.Add(new FlowRunRecord
+        {
+            FlowRunId = flowRunId,
+            FlowName = "IntermittentDemoFlow",
+            CorrelationId = correlationId,
+            TraceId = traceId,
+            StartedAt = DateTimeOffset.UtcNow,
+            Status = FlowRunStatus.Running
+        });
+        db.FlowStepRecords.Add(new FlowStepRecord { FlowRunId = flowRunId, StepName = "IntermittentStep1.Validate", ServiceName = hostEnvironment.ApplicationName, StepOrder = 1, Status = FlowStepStatus.Pending, MaxRetries = maxAttempts });
+        db.FlowStepRecords.Add(new FlowStepRecord { FlowRunId = flowRunId, StepName = "IntermittentStep2.Process", ServiceName = "AspireApp1.WorkerService2", StepOrder = 2, Status = FlowStepStatus.Pending, MaxRetries = maxAttempts });
+        db.FlowStepRecords.Add(new FlowStepRecord { FlowRunId = flowRunId, StepName = "IntermittentStep3.Finalize", ServiceName = "AspireApp1.WorkerService3", StepOrder = 3, Status = FlowStepStatus.Pending, MaxRetries = maxAttempts });
+        await db.SaveChangesAsync();
+    }
+
+    var capturedTraceParent = System.Diagnostics.Activity.Current?.Id ?? string.Empty;
+    var capturedTraceState = System.Diagnostics.Activity.Current?.TraceStateString;
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await ExecuteIntermittentStep1Async(flowRunId, correlationId, capturedTraceParent, capturedTraceState,
+                scopeFactory, httpClientFactory, logger, hostEnvironment, flowActivitySource, simulationSettings);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "IntermittentDemo step 1 background task failed. flow_run_id={flow_run_id}", flowRunId);
         }
     });
 
@@ -331,37 +400,34 @@ static async Task ExecuteRetryStep1Async(
         logger.LogInformation("RetryDemo step 1 attempt {attempt}/{max_attempts}. flow_run_id={flow_run_id} trace_id={trace_id} correlation_id={correlation_id} service.name={service_name} timestamp_utc={timestamp_utc}",
             attempt, maxAttempts, flowRunId, traceId, correlationId, hostEnvironment.ApplicationName, DateTimeOffset.UtcNow);
 
-        try
+        if (attempt < maxAttempts)
         {
-            var plan = FlowSimulationPlanner.CreateAttemptPlan(simulationSettings, flowRunId, "RetryStep1.Validate", attempt);
-            if (plan.DelayMs > 0)
-            {
-                await Task.Delay(TimeSpan.FromMilliseconds(plan.DelayMs));
-            }
-
-            if (plan.ShouldFailWithHttp500)
-            {
-                throw new HttpRequestException("Simulerat HTTP 500-fel i RetryStep1.Validate");
-            }
-
-            var weatherClient = httpClientFactory.CreateClient("apiservicestaticweather");
-            var response = await weatherClient.GetAsync("/infoweather");
-            if (!response.IsSuccessStatusCode)
-            {
-                stepActivity?.SetStatus(ActivityStatusCode.Error, $"Status: {response.StatusCode}");
-                lastError = $"HTTP {(int)response.StatusCode} from /infoweather";
-            }
-            else
-            {
-                lastError = null;
-                logger.LogInformation("RetryDemo step 1 succeeded on attempt {attempt}/{max_attempts}. flow_run_id={flow_run_id} trace_id={trace_id} correlation_id={correlation_id} timestamp_utc={timestamp_utc}",
-                    attempt, maxAttempts, flowRunId, traceId, correlationId, DateTimeOffset.UtcNow);
-            }
+            lastError = $"Simulerat fel (försök {attempt}/{maxAttempts}) – återförsök om {(retryDelay.TotalSeconds):F0} s";
+            stepActivity?.SetStatus(ActivityStatusCode.Error, lastError);
         }
-        catch (Exception ex)
+        else
         {
-            stepActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            lastError = ex.Message;
+            try
+            {
+                var weatherClient = httpClientFactory.CreateClient("apiservicestaticweather");
+                var response = await weatherClient.GetAsync("/infoweather");
+                if (!response.IsSuccessStatusCode)
+                {
+                    stepActivity?.SetStatus(ActivityStatusCode.Error, $"Status: {response.StatusCode}");
+                    lastError = $"HTTP {(int)response.StatusCode} from /infoweather";
+                }
+                else
+                {
+                    lastError = null;
+                    logger.LogInformation("RetryDemo step 1 succeeded on attempt {attempt}/{max_attempts}. flow_run_id={flow_run_id} trace_id={trace_id} correlation_id={correlation_id} timestamp_utc={timestamp_utc}",
+                        attempt, maxAttempts, flowRunId, traceId, correlationId, DateTimeOffset.UtcNow);
+                }
+            }
+            catch (Exception ex)
+            {
+                stepActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                lastError = ex.Message;
+            }
         }
 
         if (lastError is not null && attempt < maxAttempts)
@@ -384,7 +450,8 @@ static async Task ExecuteRetryStep1Async(
                 StepName: "RetryStep2.Process",
                 TraceParent: System.Diagnostics.Activity.Current?.Id ?? string.Empty,
                 TraceState: System.Diagnostics.Activity.Current?.TraceStateString,
-                CorrelationId: correlationId);
+                CorrelationId: correlationId,
+                SimulationSettings: simulationSettings);
 
             try
             {
@@ -410,6 +477,123 @@ static async Task ExecuteRetryStep1Async(
             // Mark flow as failed
             await MarkFlowRunFailedAsync(flowRunId, lastError, scopeFactory, logger);
         }
+        return;
+    }
+}
+
+static async Task ExecuteIntermittentStep1Async(
+    string flowRunId,
+    string correlationId,
+    string? traceParent,
+    string? traceState,
+    IServiceScopeFactory scopeFactory,
+    IHttpClientFactory httpClientFactory,
+    ILogger logger,
+    IHostEnvironment hostEnvironment,
+    ActivitySource activitySource,
+    FlowSimulationSettings simulationSettings)
+{
+    if (!WorkerTraceContext.TryParse(traceParent, traceState, out var parentContext))
+    {
+        parentContext = default;
+    }
+
+    var maxAttempts = simulationSettings.RetryAttempts;
+    var retryDelay = TimeSpan.FromMilliseconds(simulationSettings.RetryDelayMs);
+
+    string? lastError = null;
+    string? traceId = null;
+    string? spanId = null;
+
+    for (var attempt = 1; attempt <= maxAttempts; attempt++)
+    {
+        using var stepActivity = activitySource.StartActivity("IntermittentStep1.Validate", ActivityKind.Internal, parentContext);
+        traceId = System.Diagnostics.Activity.Current?.TraceId.ToString();
+        spanId = stepActivity?.SpanId.ToString();
+
+        await UpdateFlowStepRetryAsync(flowRunId, "IntermittentStep1.Validate", FlowStepStatus.Running,
+            traceId, spanId, attempt, maxAttempts, null, null, scopeFactory, logger);
+
+        logger.LogInformation("IntermittentDemo step 1 attempt {attempt}/{max_attempts}. flow_run_id={flow_run_id} trace_id={trace_id} correlation_id={correlation_id} service.name={service_name} timestamp_utc={timestamp_utc}",
+            attempt, maxAttempts, flowRunId, traceId, correlationId, hostEnvironment.ApplicationName, DateTimeOffset.UtcNow);
+
+        try
+        {
+            var plan = FlowSimulationPlanner.CreateAttemptPlan(simulationSettings, flowRunId, "IntermittentStep1.Validate", attempt);
+            if (plan.DelayMs > 0)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(plan.DelayMs));
+            }
+
+            if (plan.ShouldFailWithHttp500)
+            {
+                throw new HttpRequestException("Simulerat HTTP 500-fel i IntermittentStep1.Validate");
+            }
+
+            var weatherClient = httpClientFactory.CreateClient("apiservicestaticweather");
+            var response = await weatherClient.GetAsync("/infoweather");
+            if (!response.IsSuccessStatusCode)
+            {
+                stepActivity?.SetStatus(ActivityStatusCode.Error, $"Status: {response.StatusCode}");
+                lastError = $"HTTP {(int)response.StatusCode} from /infoweather";
+            }
+            else
+            {
+                lastError = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            stepActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            lastError = ex.Message;
+        }
+
+        if (lastError is not null && attempt < maxAttempts)
+        {
+            await UpdateFlowStepRetryAsync(flowRunId, "IntermittentStep1.Validate", FlowStepStatus.Retrying,
+                traceId, spanId, attempt, maxAttempts, lastError, null, scopeFactory, logger);
+            await Task.Delay(retryDelay);
+            continue;
+        }
+
+        await UpdateFlowStepRetryAsync(flowRunId, "IntermittentStep1.Validate",
+            lastError is null ? FlowStepStatus.Completed : FlowStepStatus.Failed,
+            traceId, spanId, attempt, maxAttempts, lastError, DateTimeOffset.UtcNow, scopeFactory, logger);
+
+        if (lastError is null)
+        {
+            var stepMessage = new FlowStepMessage(
+                FlowRunId: flowRunId,
+                StepName: "IntermittentStep2.Process",
+                TraceParent: System.Diagnostics.Activity.Current?.Id ?? string.Empty,
+                TraceState: System.Diagnostics.Activity.Current?.TraceStateString,
+                CorrelationId: correlationId,
+                SimulationSettings: simulationSettings);
+
+            try
+            {
+                var ws2Client = httpClientFactory.CreateClient("workerservice2");
+                var json = System.Text.Json.JsonSerializer.Serialize(stepMessage);
+                using var content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json");
+                var ws2Resp = await ws2Client.PostAsync("/flow/intermittent-demo/step", content);
+                if (!ws2Resp.IsSuccessStatusCode)
+                {
+                    lastError = $"HTTP {(int)ws2Resp.StatusCode} from workerservice2 /flow/intermittent-demo/step";
+                    logger.LogWarning("Failed to forward intermittent-demo step to workerservice2. status_code={status_code} flow_run_id={flow_run_id}", ws2Resp.StatusCode, flowRunId);
+                    await MarkFlowRunFailedAsync(flowRunId, lastError, scopeFactory, logger);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Exception forwarding intermittent-demo step to workerservice2. flow_run_id={flow_run_id}", flowRunId);
+                await MarkFlowRunFailedAsync(flowRunId, ex.Message, scopeFactory, logger);
+            }
+        }
+        else
+        {
+            await MarkFlowRunFailedAsync(flowRunId, lastError, scopeFactory, logger);
+        }
+
         return;
     }
 }
@@ -477,7 +661,8 @@ internal sealed record FlowStepMessage(
     string StepName,
     string TraceParent,
     string? TraceState,
-    string CorrelationId);
+    string CorrelationId,
+    FlowSimulationSettings? SimulationSettings = null);
 
 internal sealed record FlowStartResponse(
     string FlowRunId,

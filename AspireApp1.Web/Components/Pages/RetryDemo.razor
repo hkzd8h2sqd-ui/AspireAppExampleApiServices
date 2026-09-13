@@ -3,6 +3,7 @@
 @implements IDisposable
 @using System.Net.Http.Json
 @using System.Text.Json
+@using AspireApp1.ServiceDefaults
 @using Microsoft.EntityFrameworkCore
 @inject IHttpClientFactory HttpClientFactory
 @inject IDbContextFactory<AspireApp1.StateStore.StateStoreDbContext> DbFactory
@@ -12,9 +13,8 @@
 
 <h1>Återförsöksflöde</h1>
 <p class="lead text-muted">
-    Demonstrerar distribuerade återförsök: varje steg misslyckas <strong>två gånger</strong> med ett simulerat fel och
-    lyckas sedan på <strong>tredje försöket</strong>. Hela körningen tar ca&nbsp;1 minut.
-    Sök sedan på TraceId eller CorrelationId i Processflöde för att se alla felaktiga och lyckade span.
+    Legacy-läge med default <strong>3 försök</strong> och <strong>10 sekunder</strong> mellan försök.
+    Du kan ändra värden i formuläret innan körning.
 </p>
 
 <!-- Architecture / retry diagram -->
@@ -48,6 +48,7 @@
 </div>
 
 <div class="mb-3">
+    <FlowSimulationForm Model="_simulationModel" Defaults="_defaultSimulationModel" Title="Inställningar för Återförsöksflöde" />
     <button class="btn btn-warning btn-lg" @onclick="StartFlow" disabled="@(_isRunning || _isPolling)">
         @if (_isRunning)
         {
@@ -62,7 +63,7 @@
         else
         {
             <span class="bi bi-arrow-repeat me-1" aria-hidden="true"></span>
-            <span>Starta återförsöksflöde (~60 s)</span>
+            <span>Starta återförsöksflöde</span>
         }
     </button>
 </div>
@@ -206,8 +207,43 @@
     private string? _flowStatus;
     private string? _errorMessage;
     private List<FlowStepDto> _steps = [];
+    private FlowSimulationFormModel _defaultSimulationModel = FlowSimulationFormModel.FromSettings(new FlowSimulationSettings
+    {
+        Enabled = true,
+        RetryAttempts = 3,
+        RetryDelayMs = 10000
+    });
+    private FlowSimulationFormModel _simulationModel = FlowSimulationFormModel.FromSettings(new FlowSimulationSettings
+    {
+        Enabled = true,
+        RetryAttempts = 3,
+        RetryDelayMs = 10000
+    });
 
     private System.Threading.Timer? _pollTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProfileDefaultsAsync();
+    }
+
+    private async Task LoadProfileDefaultsAsync()
+    {
+        try
+        {
+            var http = HttpClientFactory.CreateClient("workerservice1");
+            var profileResponse = await http.GetFromJsonAsync<FlowSimulationProfilesResponse>("/flow/simulation/profiles");
+            if (profileResponse?.RetryDemo is not null)
+            {
+                _defaultSimulationModel = FlowSimulationFormModel.FromSettings(profileResponse.RetryDemo);
+                _simulationModel = FlowSimulationFormModel.FromSettings(profileResponse.RetryDemo);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Could not load retry demo simulation profile defaults");
+        }
+    }
 
     private async Task StartFlow()
     {
@@ -223,7 +259,8 @@
         {
             // Use the named workerservice1 client — BaseAddress is set by Aspire service discovery.
             var http = HttpClientFactory.CreateClient("workerservice1");
-            var resp = await http.PostAsync("/flow/retry-demo/start", content: null);
+            using var content = JsonContent.Create(new FlowStartSimulationRequest(_simulationModel.ToSettings()));
+            var resp = await http.PostAsync("/flow/retry-demo/start", content);
             if (!resp.IsSuccessStatusCode)
             {
                 _errorMessage = $"Kunde inte starta återförsöksflöde: HTTP {(int)resp.StatusCode}";

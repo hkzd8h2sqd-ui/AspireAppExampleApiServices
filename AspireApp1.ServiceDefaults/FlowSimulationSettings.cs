@@ -140,3 +140,55 @@ public sealed record FlowSimulationAttemptPlan(
     bool IsSimulationEnabled,
     int DelayMs,
     bool ShouldFailWithHttp500);
+
+/// <summary>
+/// Per-flow default simulation settings loaded from appsettings.
+/// </summary>
+public sealed class FlowSimulationProfiles
+{
+    public const string SectionName = "FlowSimulationProfiles";
+
+    public FlowSimulationSettings RetryDemo { get; set; } = new()
+    {
+        Enabled = true,
+        RetryAttempts = 3,
+        RetryDelayMs = 10000,
+        NormalMinDelayMs = 10,
+        NormalMaxDelayMs = 500,
+        SlowMinDelayMs = 5000,
+        SlowMaxDelayMs = 30000,
+        SlowCallProbabilityPercent = 0,
+        Http500ProbabilityPercent = 0,
+        DeterministicSeed = 2026
+    };
+
+    public FlowSimulationSettings IntermittentDemo { get; set; } = new()
+    {
+        Enabled = true,
+        RetryAttempts = 3,
+        RetryDelayMs = 1000,
+        NormalMinDelayMs = 10,
+        NormalMaxDelayMs = 500,
+        SlowMinDelayMs = 5000,
+        SlowMaxDelayMs = 30000,
+        SlowCallProbabilityPercent = 20,
+        Http500ProbabilityPercent = 15,
+        DeterministicSeed = 2026
+    };
+}
+
+/// <summary>
+/// Request body used when starting a flow with optional simulation overrides.
+/// </summary>
+/// <param name="SimulationSettings">Runtime simulation settings for this flow run.</param>
+public sealed record FlowStartSimulationRequest(
+    FlowSimulationSettings? SimulationSettings);
+
+/// <summary>
+/// Response with default simulation profiles for Retry and Intermittent flows.
+/// </summary>
+/// <param name="RetryDemo">Default settings for retry-demo flow.</param>
+/// <param name="IntermittentDemo">Default settings for intermittent-demo flow.</param>
+public sealed record FlowSimulationProfilesResponse(
+    FlowSimulationSettings RetryDemo,
+    FlowSimulationSettings IntermittentDemo);

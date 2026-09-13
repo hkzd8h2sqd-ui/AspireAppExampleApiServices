@@ -72,28 +72,33 @@ Startsidan i frontend visar nu aktiv provider under rubriken **Aktiv StateStore 
 
 Sidan `/flowruns` visar alla senaste flödeskörningar och länkar vidare till `/processflow`.
 
-## Retry-demo med konfigurerbar simulering
+## Retry- och Intermittent-demo med konfigurerbar simulering
 
-Retry-demo-flödet (`/retrydemo` → `POST /flow/retry-demo/start`) använder inställningar per tjänst i `FlowSimulation`:
+Formulären på `/retrydemo` och `/intermittentdemo` hämtar default-profiler från WorkerService1 (`GET /flow/simulation/profiles`) och skickar valda värden vid start av flöde.
+
+Default-profilerna sätts i `AspireApp1.WorkerService1/appsettings.json` under `FlowSimulationProfiles`:
 
 ```json
 {
-  "FlowSimulation": {
-    "Enabled": true,
-    "RetryAttempts": 3,
-    "NormalMinDelayMs": 10,
-    "NormalMaxDelayMs": 500,
-    "SlowMinDelayMs": 5000,
-    "SlowMaxDelayMs": 30000,
-    "SlowCallProbabilityPercent": 20,
-    "Http500ProbabilityPercent": 15,
-    "RetryDelayMs": 1000,
-    "DeterministicSeed": 2026
+  "FlowSimulationProfiles": {
+    "RetryDemo": {
+      "RetryAttempts": 3,
+      "RetryDelayMs": 10000
+    },
+    "IntermittentDemo": {
+      "RetryAttempts": 3,
+      "NormalMinDelayMs": 10,
+      "NormalMaxDelayMs": 500,
+      "SlowMinDelayMs": 5000,
+      "SlowMaxDelayMs": 30000,
+      "SlowCallProbabilityPercent": 20,
+      "Http500ProbabilityPercent": 15,
+      "RetryDelayMs": 1000
+    }
   }
 }
 ```
 
-- `RetryAttempts` klampas till 1–3.
-- `SlowCallProbabilityPercent` och `Http500ProbabilityPercent` styr hur ofta långsamma anrop och simulerade HTTP 500 uppstår.
-- `DeterministicSeed` gör simuleringen reproducerbar för samma flow run + steg + försök.
-- Sätt `Enabled` till `false` för normal drift utan simulerade fördröjningar/fel.
+- **RetryDemo** kör legacy-beteende som default: 3 försök med 10 sekunder mellan försök.
+- **IntermittentDemo** kör sannolikhetsstyrd intermittent simulering (slow + HTTP 500) med 1–3 försök.
+- `RetryAttempts` klampas till 1–3 innan körning.

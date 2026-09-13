@@ -65,4 +65,16 @@ public class FlowSimulationSettingsTests
         Assert.AreEqual(0, settings.SlowMinDelayMs);
         Assert.AreEqual(0, settings.SlowMaxDelayMs);
     }
+
+    [TestMethod]
+    public void FlowSimulationProfiles_HasLegacyRetryDefaults()
+    {
+        var profiles = new FlowSimulationProfiles();
+        var retry = FlowSimulationPlanner.Normalize(profiles.RetryDemo);
+
+        Assert.AreEqual(3, retry.RetryAttempts);
+        Assert.AreEqual(10000, retry.RetryDelayMs);
+        Assert.AreEqual(0, retry.SlowCallProbabilityPercent);
+        Assert.AreEqual(0, retry.Http500ProbabilityPercent);
+    }
 }

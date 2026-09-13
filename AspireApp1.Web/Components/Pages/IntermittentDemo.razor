@@ -3,6 +3,7 @@
 @implements IDisposable
 @using System.Net.Http.Json
 @using System.Text.Json
+@using AspireApp1.ServiceDefaults
 @using Microsoft.EntityFrameworkCore
 @inject IHttpClientFactory HttpClientFactory
 @inject IDbContextFactory<AspireApp1.StateStore.StateStoreDbContext> DbFactory
@@ -12,17 +13,15 @@
 
 <h1>Intermittentflöde</h1>
 <p class="lead text-muted">
-    Demonstrerar distribuerade återförsök med konfigurerbar simulering i varje nivå (WS1→WS2→WS3):
-    <strong>1–3 försök</strong>, normala svarstider <strong>10–500 ms</strong>, intermittenta långsamma svar
-    <strong>5 000–30 000 ms</strong> och simulerade <strong>HTTP 500-fel</strong>.
-    Sök på TraceId eller CorrelationId i Processflöde för att se retry, långsamma körningar och slutliga fel.
+    Simulerar verklig drift med intermittenta svar: ibland OK, ibland timeout/långsamhet, ibland HTTP 500.
+    Värdena kommer från appsettings och kan ändras i formuläret innan körning.
 </p>
 
 <!-- Architecture / retry diagram -->
 <div class="card mb-4 border-0 bg-light">
     <div class="card-body">
         <div class="d-flex flex-wrap gap-2 align-items-center justify-content-center font-monospace small">
-            <span class="badge bg-primary px-2 py-1">Web → /flow/retry-demo/start</span>
+            <span class="badge bg-primary px-2 py-1">Web → /flow/intermittent-demo/start</span>
             <span>→</span>
             <div class="d-flex flex-column align-items-center gap-1">
                 <span class="badge bg-secondary px-2 py-1">WS1 försök 1–3</span>
@@ -49,6 +48,7 @@
 </div>
 
 <div class="mb-3">
+    <FlowSimulationForm Model="_simulationModel" Defaults="_defaultSimulationModel" Title="Inställningar för Intermittentflöde" />
     <button class="btn btn-warning btn-lg" @onclick="StartFlow" disabled="@(_isRunning || _isPolling)">
         @if (_isRunning)
         {
@@ -63,7 +63,7 @@
         else
         {
             <span class="bi bi-arrow-repeat me-1" aria-hidden="true"></span>
-            <span>Starta återförsöksflöde</span>
+            <span>Starta intermittentflöde</span>
         }
     </button>
 </div>
@@ -207,8 +207,33 @@
     private string? _flowStatus;
     private string? _errorMessage;
     private List<FlowStepDto> _steps = [];
+    private FlowSimulationFormModel _defaultSimulationModel = FlowSimulationFormModel.FromSettings(new FlowSimulationSettings());
+    private FlowSimulationFormModel _simulationModel = FlowSimulationFormModel.FromSettings(new FlowSimulationSettings());
 
     private System.Threading.Timer? _pollTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProfileDefaultsAsync();
+    }
+
+    private async Task LoadProfileDefaultsAsync()
+    {
+        try
+        {
+            var http = HttpClientFactory.CreateClient("workerservice1");
+            var profileResponse = await http.GetFromJsonAsync<FlowSimulationProfilesResponse>("/flow/simulation/profiles");
+            if (profileResponse?.IntermittentDemo is not null)
+            {
+                _defaultSimulationModel = FlowSimulationFormModel.FromSettings(profileResponse.IntermittentDemo);
+                _simulationModel = FlowSimulationFormModel.FromSettings(profileResponse.IntermittentDemo);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Could not load intermittent demo simulation profile defaults");
+        }
+    }
 
     private async Task StartFlow()
     {
@@ -224,10 +249,11 @@
         {
             // Use the named workerservice1 client — BaseAddress is set by Aspire service discovery.
             var http = HttpClientFactory.CreateClient("workerservice1");
-            var resp = await http.PostAsync("/flow/retry-demo/start", content: null);
+            using var content = JsonContent.Create(new FlowStartSimulationRequest(_simulationModel.ToSettings()));
+            var resp = await http.PostAsync("/flow/intermittent-demo/start", content);
             if (!resp.IsSuccessStatusCode)
             {
-                _errorMessage = $"Kunde inte starta återförsöksflöde: HTTP {(int)resp.StatusCode}";
+                _errorMessage = $"Kunde inte starta intermittentflöde: HTTP {(int)resp.StatusCode}";
                 return;
             }
 
@@ -251,7 +277,7 @@
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error starting retry-demo flow");
+            Logger.LogError(ex, "Error starting intermittent-demo flow");
             _errorMessage = $"Fel: {ex.Message}";
         }
         finally
@@ -316,7 +342,7 @@
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error polling retry-demo flow status");
+            Logger.LogError(ex, "Error polling intermittent-demo flow status");
         }
     }
 
