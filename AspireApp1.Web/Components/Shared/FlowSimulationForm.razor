@@ -1,0 +1,67 @@
+@using AspireApp1.Web.Models
+
+<div class="card mb-3 border-0 bg-light">
+    <div class="card-body">
+        <h6 class="mb-3">@Title</h6>
+        <div class="row g-2">
+            <div class="col-md-2">
+                <label class="form-label">Försök (1–3)</label>
+                <InputNumber class="form-control form-control-sm" @bind-Value="Model.RetryAttempts" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Retry delay (ms)</label>
+                <InputNumber class="form-control form-control-sm" @bind-Value="Model.RetryDelayMs" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Normal min (ms)</label>
+                <InputNumber class="form-control form-control-sm" @bind-Value="Model.NormalMinDelayMs" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Normal max (ms)</label>
+                <InputNumber class="form-control form-control-sm" @bind-Value="Model.NormalMaxDelayMs" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Slow min (ms)</label>
+                <InputNumber class="form-control form-control-sm" @bind-Value="Model.SlowMinDelayMs" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Slow max (ms)</label>
+                <InputNumber class="form-control form-control-sm" @bind-Value="Model.SlowMaxDelayMs" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Slow sannolikhet (%)</label>
+                <InputNumber class="form-control form-control-sm" @bind-Value="Model.SlowCallProbabilityPercent" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">HTTP 500 sannolikhet (%)</label>
+                <InputNumber class="form-control form-control-sm" @bind-Value="Model.Http500ProbabilityPercent" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Deterministic seed</label>
+                <InputNumber class="form-control form-control-sm" @bind-Value="Model.DeterministicSeed" />
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+                <button class="btn btn-outline-secondary btn-sm w-100" type="button" @onclick="ResetDefaults">Återställ default</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public required FlowSimulationFormModel Model { get; set; }
+    [Parameter, EditorRequired] public required FlowSimulationFormModel Defaults { get; set; }
+    [Parameter] public string Title { get; set; } = "Simuleringsinställningar";
+
+    private void ResetDefaults()
+    {
+        Model.RetryAttempts = Defaults.RetryAttempts;
+        Model.RetryDelayMs = Defaults.RetryDelayMs;
+        Model.NormalMinDelayMs = Defaults.NormalMinDelayMs;
+        Model.NormalMaxDelayMs = Defaults.NormalMaxDelayMs;
+        Model.SlowMinDelayMs = Defaults.SlowMinDelayMs;
+        Model.SlowMaxDelayMs = Defaults.SlowMaxDelayMs;
+        Model.SlowCallProbabilityPercent = Defaults.SlowCallProbabilityPercent;
+        Model.Http500ProbabilityPercent = Defaults.Http500ProbabilityPercent;
+        Model.DeterministicSeed = Defaults.DeterministicSeed;
+    }
+}

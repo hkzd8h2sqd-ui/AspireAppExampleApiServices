@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AspireApp1.ServiceDefaults;
 using AspireApp1.StateStore;
 using AspireApp1.WorkerService3;
 using Microsoft.EntityFrameworkCore;
@@ -7,6 +8,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 builder.Services.AddProblemDetails();
+builder.Services.Configure<FlowSimulationSettings>(builder.Configuration.GetSection(FlowSimulationSettings.SectionName));
 builder.Services.AddSingleton<WorkerJobQueue>();
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddHttpClient("apiservicestaticweather", client =>
@@ -92,8 +94,10 @@ app.MapPost("/flow/retry-demo/step", (
     IServiceScopeFactory scopeFactory,
     IHttpClientFactory httpClientFactory,
     ILogger<Program> logger,
-    IHostEnvironment hostEnvironment) =>
+    IHostEnvironment hostEnvironment,
+    Microsoft.Extensions.Options.IOptions<FlowSimulationSettings> simulationOptions) =>
 {
+    var simulationSettings = FlowSimulationPlanner.Normalize(message.SimulationSettings ?? simulationOptions.Value);
     var capturedTraceParent = Activity.Current?.Id ?? message.TraceParent;
     var capturedTraceState = Activity.Current?.TraceStateString ?? message.TraceState;
 
@@ -102,11 +106,39 @@ app.MapPost("/flow/retry-demo/step", (
         try
         {
             await ExecuteRetryStep3Async(message, capturedTraceParent, capturedTraceState,
-                scopeFactory, httpClientFactory, logger, hostEnvironment, flowActivitySource);
+                scopeFactory, httpClientFactory, logger, hostEnvironment, flowActivitySource, simulationSettings);
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "RetryDemo step 3 background task failed. flow_run_id={flow_run_id}", message.FlowRunId);
+        }
+    });
+
+    return Results.Accepted();
+});
+
+app.MapPost("/flow/intermittent-demo/step", (
+    FlowStepMessage message,
+    IServiceScopeFactory scopeFactory,
+    IHttpClientFactory httpClientFactory,
+    ILogger<Program> logger,
+    IHostEnvironment hostEnvironment,
+    Microsoft.Extensions.Options.IOptions<FlowSimulationSettings> simulationOptions) =>
+{
+    var simulationSettings = FlowSimulationPlanner.Normalize(message.SimulationSettings ?? simulationOptions.Value);
+    var capturedTraceParent = Activity.Current?.Id ?? message.TraceParent;
+    var capturedTraceState = Activity.Current?.TraceStateString ?? message.TraceState;
+
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await ExecuteIntermittentStep3Async(message, capturedTraceParent, capturedTraceState,
+                scopeFactory, httpClientFactory, logger, hostEnvironment, flowActivitySource, simulationSettings);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "IntermittentDemo step 3 background task failed. flow_run_id={flow_run_id}", message.FlowRunId);
         }
     });
 
@@ -265,15 +297,16 @@ static async Task ExecuteRetryStep3Async(
     IHttpClientFactory httpClientFactory,
     ILogger logger,
     IHostEnvironment hostEnvironment,
-    ActivitySource activitySource)
+    ActivitySource activitySource,
+    FlowSimulationSettings simulationSettings)
 {
     if (!WorkerTraceContext.TryParse(traceParent, traceState, out var parentContext))
     {
         parentContext = default;
     }
 
-    const int maxAttempts = 3;
-    const int retryDelaySeconds = 10;
+    var maxAttempts = simulationSettings.RetryAttempts;
+    var retryDelay = TimeSpan.FromMilliseconds(simulationSettings.RetryDelayMs);
 
     string? lastError = null;
     string? traceId = null;
@@ -293,33 +326,33 @@ static async Task ExecuteRetryStep3Async(
 
         if (attempt < maxAttempts)
         {
-            lastError = $"Simulerat fel (försök {attempt}/{maxAttempts}) – återförsök om {retryDelaySeconds} s";
+            lastError = $"Simulerat fel (försök {attempt}/{maxAttempts}) – återförsök om {(retryDelay.TotalSeconds):F0} s";
             stepActivity?.SetStatus(ActivityStatusCode.Error, lastError);
+        }
+        else
+        {
+            try
+            {
+                var weatherClient = httpClientFactory.CreateClient("apiservicestaticweather");
+                var response = await weatherClient.GetAsync("/infoweather");
+                lastError = response.IsSuccessStatusCode ? null : $"HTTP {(int)response.StatusCode} from /infoweather";
+                if (!response.IsSuccessStatusCode) stepActivity?.SetStatus(ActivityStatusCode.Error, lastError);
+                else logger.LogInformation("RetryDemo step 3 succeeded on attempt {attempt}/{max_attempts}. flow_run_id={flow_run_id} trace_id={trace_id} timestamp_utc={timestamp_utc}",
+                    attempt, maxAttempts, message.FlowRunId, traceId, DateTimeOffset.UtcNow);
+            }
+            catch (Exception ex)
+            {
+                stepActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                lastError = ex.Message;
+            }
+        }
 
-            logger.LogWarning("RetryDemo step 3 intentional failure on attempt {attempt}/{max_attempts}. error={error} flow_run_id={flow_run_id} trace_id={trace_id} correlation_id={correlation_id} timestamp_utc={timestamp_utc}",
-                attempt, maxAttempts, lastError, message.FlowRunId, traceId, message.CorrelationId, DateTimeOffset.UtcNow);
-
+        if (lastError is not null && attempt < maxAttempts)
+        {
             await UpdateRetryFlowStep3Async(message.FlowRunId, "RetryStep3.Finalize", FlowStepStatus.Retrying,
                 traceId, spanId, attempt, maxAttempts, lastError, null, scopeFactory, logger);
-
-            await Task.Delay(TimeSpan.FromSeconds(retryDelaySeconds));
+            await Task.Delay(retryDelay);
             continue;
-        }
-
-        try
-        {
-            await Task.Delay(TimeSpan.FromSeconds(3));
-            var weatherClient = httpClientFactory.CreateClient("apiservicestaticweather");
-            var response = await weatherClient.GetAsync("/infoweather");
-            lastError = response.IsSuccessStatusCode ? null : $"HTTP {(int)response.StatusCode} from /infoweather";
-            if (!response.IsSuccessStatusCode) stepActivity?.SetStatus(ActivityStatusCode.Error, lastError);
-            else logger.LogInformation("RetryDemo step 3 succeeded on attempt {attempt}/{max_attempts}. flow_run_id={flow_run_id} trace_id={trace_id} timestamp_utc={timestamp_utc}",
-                attempt, maxAttempts, message.FlowRunId, traceId, DateTimeOffset.UtcNow);
-        }
-        catch (Exception ex)
-        {
-            stepActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            lastError = ex.Message;
         }
 
         var finalStatus = lastError is null ? FlowStepStatus.Completed : FlowStepStatus.Failed;
@@ -348,6 +381,101 @@ static async Task ExecuteRetryStep3Async(
         {
             logger.LogWarning(ex, "Failed to update RetryDemoFlow run status. flow_run_id={flow_run_id}", message.FlowRunId);
         }
+        return;
+    }
+}
+
+static async Task ExecuteIntermittentStep3Async(
+    FlowStepMessage message,
+    string? traceParent,
+    string? traceState,
+    IServiceScopeFactory scopeFactory,
+    IHttpClientFactory httpClientFactory,
+    ILogger logger,
+    IHostEnvironment hostEnvironment,
+    ActivitySource activitySource,
+    FlowSimulationSettings simulationSettings)
+{
+    if (!WorkerTraceContext.TryParse(traceParent, traceState, out var parentContext))
+    {
+        parentContext = default;
+    }
+
+    var maxAttempts = simulationSettings.RetryAttempts;
+    var retryDelay = TimeSpan.FromMilliseconds(simulationSettings.RetryDelayMs);
+
+    string? lastError = null;
+    string? traceId = null;
+    string? spanId = null;
+
+    for (var attempt = 1; attempt <= maxAttempts; attempt++)
+    {
+        using var stepActivity = activitySource.StartActivity("IntermittentStep3.Finalize", ActivityKind.Consumer, parentContext);
+        traceId = Activity.Current?.TraceId.ToString();
+        spanId = stepActivity?.SpanId.ToString();
+
+        await UpdateRetryFlowStep3Async(message.FlowRunId, "IntermittentStep3.Finalize", FlowStepStatus.Running,
+            traceId, spanId, attempt, maxAttempts, null, null, scopeFactory, logger);
+
+        logger.LogInformation("IntermittentDemo step 3 attempt {attempt}/{max_attempts}. flow_run_id={flow_run_id} trace_id={trace_id} correlation_id={correlation_id} service.name={service_name} timestamp_utc={timestamp_utc}",
+            attempt, maxAttempts, message.FlowRunId, traceId, message.CorrelationId, hostEnvironment.ApplicationName, DateTimeOffset.UtcNow);
+
+        try
+        {
+            var plan = FlowSimulationPlanner.CreateAttemptPlan(simulationSettings, message.FlowRunId, "IntermittentStep3.Finalize", attempt);
+            if (plan.DelayMs > 0)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(plan.DelayMs));
+            }
+
+            if (plan.ShouldFailWithHttp500)
+            {
+                throw new HttpRequestException("Simulerat HTTP 500-fel i IntermittentStep3.Finalize");
+            }
+
+            var weatherClient = httpClientFactory.CreateClient("apiservicestaticweather");
+            var response = await weatherClient.GetAsync("/infoweather");
+            lastError = response.IsSuccessStatusCode ? null : $"HTTP {(int)response.StatusCode} from /infoweather";
+            if (!response.IsSuccessStatusCode) stepActivity?.SetStatus(ActivityStatusCode.Error, lastError);
+        }
+        catch (Exception ex)
+        {
+            stepActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            lastError = ex.Message;
+        }
+
+        if (lastError is not null && attempt < maxAttempts)
+        {
+            await UpdateRetryFlowStep3Async(message.FlowRunId, "IntermittentStep3.Finalize", FlowStepStatus.Retrying,
+                traceId, spanId, attempt, maxAttempts, lastError, null, scopeFactory, logger);
+            await Task.Delay(retryDelay);
+            continue;
+        }
+
+        var finalStatus = lastError is null ? FlowStepStatus.Completed : FlowStepStatus.Failed;
+        await UpdateRetryFlowStep3Async(message.FlowRunId, "IntermittentStep3.Finalize", finalStatus,
+            traceId, spanId, attempt, maxAttempts, lastError, DateTimeOffset.UtcNow, scopeFactory, logger);
+
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<StateStoreDbContext>();
+            var flowRun = await db.FlowRunRecords.FirstOrDefaultAsync(r => r.FlowRunId == message.FlowRunId);
+            if (flowRun is not null)
+            {
+                var anyFailed = await db.FlowStepRecords
+                    .AnyAsync(s => s.FlowRunId == message.FlowRunId && s.Status == FlowStepStatus.Failed);
+                flowRun.Status = anyFailed ? FlowRunStatus.Failed : FlowRunStatus.Completed;
+                flowRun.CompletedAt = DateTimeOffset.UtcNow;
+                flowRun.ErrorMessage = anyFailed ? "One or more steps failed" : null;
+                await db.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to update IntermittentDemoFlow run status. flow_run_id={flow_run_id}", message.FlowRunId);
+        }
+
         return;
     }
 }
@@ -392,4 +520,5 @@ internal sealed record FlowStepMessage(
     string StepName,
     string TraceParent,
     string? TraceState,
-    string CorrelationId);
+    string CorrelationId,
+    FlowSimulationSettings? SimulationSettings = null);

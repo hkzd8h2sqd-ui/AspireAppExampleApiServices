@@ -71,3 +71,34 @@ StateStore kan köras med både SQLite och SQL Server via konfiguration i `Aspir
 Startsidan i frontend visar nu aktiv provider under rubriken **Aktiv StateStore DB**.
 
 Sidan `/flowruns` visar alla senaste flödeskörningar och länkar vidare till `/processflow`.
+
+## Retry- och Intermittent-demo med konfigurerbar simulering
+
+Formulären på `/retrydemo` och `/intermittentdemo` hämtar default-profiler från WorkerService1 (`GET /flow/simulation/profiles`) och skickar valda värden vid start av flöde.
+
+Default-profilerna sätts i `AspireApp1.WorkerService1/appsettings.json` under `FlowSimulationProfiles`:
+
+```json
+{
+  "FlowSimulationProfiles": {
+    "RetryDemo": {
+      "RetryAttempts": 3,
+      "RetryDelayMs": 10000
+    },
+    "IntermittentDemo": {
+      "RetryAttempts": 3,
+      "NormalMinDelayMs": 10,
+      "NormalMaxDelayMs": 500,
+      "SlowMinDelayMs": 5000,
+      "SlowMaxDelayMs": 30000,
+      "SlowCallProbabilityPercent": 20,
+      "Http500ProbabilityPercent": 15,
+      "RetryDelayMs": 1000
+    }
+  }
+}
+```
+
+- **RetryDemo** kör legacy-beteende som default: 3 försök med 10 sekunder mellan försök.
+- **IntermittentDemo** kör sannolikhetsstyrd intermittent simulering (slow + HTTP 500) med 1–3 försök.
+- `RetryAttempts` klampas till 1–3 innan körning.

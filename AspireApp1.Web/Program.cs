@@ -164,6 +164,48 @@ app.MapPost("/api/flow/retry-demo/start", async (IHttpClientFactory httpClientFa
     }
 });
 
+app.MapPost("/api/flow/intermittent-demo/start", async (IHttpClientFactory httpClientFactory, ILogger<Program> logger, CancellationToken ct) =>
+{
+    try
+    {
+        var client = httpClientFactory.CreateClient("workerservice1");
+        var response = await client.PostAsync("/flow/intermittent-demo/start", content: null, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            logger.LogWarning("IntermittentDemo flow start failed. status_code={status_code}", response.StatusCode);
+            return Results.StatusCode((int)response.StatusCode);
+        }
+        var body = await response.Content.ReadAsStringAsync(ct);
+        return Results.Content(body, "application/json");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Exception triggering intermittent-demo flow start");
+        return Results.Problem("Failed to start intermittent-demo flow");
+    }
+});
+
+app.MapGet("/api/flow/simulation/profiles", async (IHttpClientFactory httpClientFactory, ILogger<Program> logger, CancellationToken ct) =>
+{
+    try
+    {
+        var client = httpClientFactory.CreateClient("workerservice1");
+        var response = await client.GetAsync("/flow/simulation/profiles", ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            logger.LogWarning("Flow simulation profile fetch failed. status_code={status_code}", response.StatusCode);
+            return Results.StatusCode((int)response.StatusCode);
+        }
+        var body = await response.Content.ReadAsStringAsync(ct);
+        return Results.Content(body, "application/json");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Exception fetching flow simulation profiles");
+        return Results.Problem("Failed to fetch flow simulation profiles");
+    }
+});
+
 // Restart a flow by starting a new run of the same flow type as an existing flowRunId.
 app.MapPost("/api/flow/{flowRunId}/restart", async (
     string flowRunId,
@@ -183,7 +225,9 @@ app.MapPost("/api/flow/{flowRunId}/restart", async (
 
     var targetPath = string.Equals(existingFlow.FlowName, "RetryDemoFlow", StringComparison.OrdinalIgnoreCase)
         ? "/flow/retry-demo/start"
-        : "/flow/start";
+        : string.Equals(existingFlow.FlowName, "IntermittentDemoFlow", StringComparison.OrdinalIgnoreCase)
+            ? "/flow/intermittent-demo/start"
+            : "/flow/start";
 
     try
     {
