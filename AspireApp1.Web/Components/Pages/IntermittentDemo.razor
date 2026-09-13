@@ -1,4 +1,4 @@
-﻿@page "/retrydemo"
+﻿@page "/intermittentdemo"
 @rendermode InteractiveServer
 @implements IDisposable
 @using System.Net.Http.Json
@@ -6,11 +6,11 @@
 @using Microsoft.EntityFrameworkCore
 @inject IHttpClientFactory HttpClientFactory
 @inject IDbContextFactory<AspireApp1.StateStore.StateStoreDbContext> DbFactory
-@inject ILogger<RetryDemo> Logger
+@inject ILogger<IntermittentDemo> Logger
 
-<PageTitle>Återförsöksflöde</PageTitle>
+<PageTitle>Intermittentflöde</PageTitle>
 
-<h1>Återförsöksflöde</h1>
+<h1>Intermittentflöde</h1>
 <p class="lead text-muted">
     Demonstrerar distribuerade återförsök med konfigurerbar simulering i varje nivå (WS1→WS2→WS3):
     <strong>1–3 försök</strong>, normala svarstider <strong>10–500 ms</strong>, intermittenta långsamma svar

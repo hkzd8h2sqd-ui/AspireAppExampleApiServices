@@ -9,16 +9,23 @@
 <div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
     <nav class="nav flex-column">
         <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill" aria-hidden="true"></span> Home
-            </NavLink>
-        </div>
-
-        <div class="nav-item px-3">
             <NavLink class="nav-link" href="counter">
                 <span class="bi bi-plus-square-fill" aria-hidden="true"></span> Counter
             </NavLink>
         </div>
+
+
+
+        <hr class="nav-divider" />
+        <div class="nav-section-label px-3">Startsidan</div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                <span class="bi bi-house-door-fill" aria-hidden="true"></span> Dashboard (Home)
+            </NavLink>
+        </div>
+
+
 
         <hr class="nav-divider" />
         <div class="nav-section-label px-3">API-anrop</div>
@@ -41,12 +48,14 @@
             </NavLink>
         </div>
 
+
+
         <hr class="nav-divider" />
-        <div class="nav-section-label px-3">Distribuerad telemetri</div>
+        <div class="nav-section-label px-3">Flödesutlösare</div>
 
         <div class="nav-item px-3">
             <NavLink class="nav-link" href="flowdemo">
-                <span class="bi bi-play-circle-fill" aria-hidden="true"></span> Flödesutlösare
+                <span class="bi bi-play-circle-fill" aria-hidden="true"></span> Normalflöde
             </NavLink>
         </div>
 
@@ -55,6 +64,17 @@
                 <span aria-hidden="true">🔁</span> Återförsöksflöde
             </NavLink>
         </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="intermittentdemo">
+                <span aria-hidden="true">⚠️</span> Intermittentflöde
+            </NavLink>
+        </div>
+
+
+
+        <hr class="nav-divider" />
+        <div class="nav-section-label px-3">Distribuerad telemetri</div>
 
         <div class="nav-item px-3">
             <NavLink class="nav-link" href="processflow">
