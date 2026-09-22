@@ -2,10 +2,52 @@
 This is an example project for the AspireApp application. It demonstrates the basic structure and functionality of the application, including user authentication, data management, and UI components.
 
 
-## Getting Started
-To get started with the AspireApp1 example project, follow these steps:
-1. Clone the repository
-2. Run the application `AspireApp1.AppHost` to start the server
+## Getting Started (köra lokalt)
+
+Fungerar på macOS, Linux och Windows. StateStore använder **SQLite som standard**, så ingen databasserver behövs.
+
+### 1. Förutsättningar (en gång)
+
+1. **.NET 10 SDK** (10.0.303 eller senare, se `global.json`)
+   ```bash
+   # macOS
+   brew install --cask dotnet-sdk
+   dotnet --list-sdks
+   ```
+2. **Aspire CLI**. Krävs eftersom AppHost använder `AspireUseCliBundle` (annars fel `ASPIRE009` vid build).
+   ```bash
+   curl -sSL https://aspire.dev/install.sh | bash
+   # alternativt: dotnet tool install -g Aspire.Cli
+   ```
+3. **Lita på HTTPS-utvecklarcertifikatet**
+   ```bash
+   dotnet dev-certs https --trust
+   ```
+
+### 2. Bygg och starta
+
+```bash
+git clone <repo-url>
+cd AspireAppExampleApiServices
+dotnet build AspireApp1.slnx
+aspire run          # eller: dotnet run --project AspireApp1.AppHost
+```
+
+1. Terminalen skriver ut en länk till **Aspire Dashboard** (med inloggningstoken). Öppna den.
+2. Klicka på endpointen för **webfrontend** för att öppna appen.
+3. Gå till `/flowdemo` och starta ett flöde. Följ det i `/flowruns` och `/processflow`.
+
+SQLite-databasen skapas automatiskt i LocalApplicationData, dvs.
+`~/.local/share/AspireApp1/statestore.db` på macOS/Linux och `%LOCALAPPDATA%\AspireApp1\statestore.db` på Windows.
+Radera filen om du vill börja om med en tom databas.
+
+### 3. Kör testerna
+
+```bash
+dotnet run --project AspireApp1.Tests
+```
+
+Testprojektet använder Microsoft.Testing.Platform, så `dotnet test` (VSTest-läget) fungerar inte på .NET 10 SDK.
 
 ## Arkitekturöversikt
 
@@ -46,7 +88,7 @@ StateStore kan köras med både SQLite och SQL Server via konfiguration i `Aspir
 ```json
 {
   "StateStore": {
-    "Provider": "SqlServer"
+    "Provider": "Sqlite"
   },
   "ConnectionStrings": {
     "statestoreSqlServer": "Server=.;Database=AspireApp1StateStore;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True"
@@ -54,7 +96,7 @@ StateStore kan köras med både SQLite och SQL Server via konfiguration i `Aspir
 }
 ```
 
-- **Default är `Provider = "SqlServer"`**
+- **Default är `Provider = "Sqlite"`** (även om nyckeln saknas eller har okänt värde)
 - `Provider = "SqlServer"` använder `ConnectionStrings:statestoreSqlServer`
 - `Provider = "Sqlite"` använder delad fil i LocalApplicationData (sätts i AppHost om `ConnectionStrings:statestore` saknas)
 - Databasen och tabellerna skapas automatiskt vid uppstart om de saknas (gäller både SQL Server och SQLite)
@@ -67,6 +109,17 @@ StateStore kan köras med både SQLite och SQL Server via konfiguration i `Aspir
 2. Sätt `StateStore:Provider` till `Sqlite` eller `SqlServer`.
 3. Kontrollera att motsvarande connection string är satt.
 4. Starta om `AspireApp1.AppHost`.
+
+Du kan också växla utan att ändra filen, via miljövariabel:
+
+```bash
+export StateStore__Provider=SqlServer
+aspire run
+```
+
+> **SQL Server på macOS/Linux:** `Trusted_Connection=True` (Windows-autentisering) fungerar inte där.
+> Kör SQL Server i Docker (`mcr.microsoft.com/mssql/server`) och använd en connection string med
+> `User Id=sa;Password=...;TrustServerCertificate=True` i `ConnectionStrings:statestoreSqlServer`.
 
 Startsidan i frontend visar nu aktiv provider under rubriken **Aktiv StateStore DB**.
 
