@@ -1,0 +1,11 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "AppHost (Aspire)",
+      "type": "dotnet",
+      "request": "launch",
+      "projectPath": "${workspaceFolder}/AspireApp1.AppHost/AspireApp1.AppHost.csproj"
+    }
+  ]
+}

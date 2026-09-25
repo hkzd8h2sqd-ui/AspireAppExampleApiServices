@@ -41,6 +41,17 @@ SQLite-databasen skapas automatiskt i LocalApplicationData, dvs.
 `~/.local/share/AspireApp1/statestore.db` på macOS/Linux och `%LOCALAPPDATA%\AspireApp1\statestore.db` på Windows.
 Radera filen om du vill börja om med en tom databas.
 
+### Bygga och köra i VS Code
+
+1. Installera tillägget **C# Dev Kit** (VS Code föreslår det automatiskt via `.vscode/extensions.json`).
+2. Öppna projektet från terminalen så att VS Code ärver din `PATH` (viktigt om .NET ligger i `~/.dotnet`):
+   ```bash
+   code .
+   ```
+3. **Bygg:** `⌘⇧B` (kör tasken `build` = `dotnet build AspireApp1.slnx`).
+4. **Kör/debugga:** `F5` och välj **AppHost (Aspire)**. Dashboard-länken visas i *Debug Console*.
+5. **Tester:** `⌘⇧P` → *Tasks: Run Test Task*, eller Testing-panelen i C# Dev Kit.
+
 ### Felsökning: HTTPS-certifikatet på macOS
 
 Om `dotnet dev-certs https --trust` misslyckas:
