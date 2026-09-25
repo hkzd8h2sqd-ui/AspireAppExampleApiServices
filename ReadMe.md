@@ -41,6 +41,31 @@ SQLite-databasen skapas automatiskt i LocalApplicationData, dvs.
 `~/.local/share/AspireApp1/statestore.db` på macOS/Linux och `%LOCALAPPDATA%\AspireApp1\statestore.db` på Windows.
 Radera filen om du vill börja om med en tom databas.
 
+### Felsökning: HTTPS-certifikatet på macOS
+
+Om `dotnet dev-certs https --trust` misslyckas:
+
+- **`There was an error saving the HTTPS developer certificate...`**: lås upp nyckelringen och försök igen:
+  ```bash
+  security unlock-keychain ~/Library/Keychains/login.keychain-db
+  dotnet dev-certs https --clean
+  dotnet dev-certs https --trust
+  ```
+- **`The authorization was denied since no user interaction was possible`**: macOS kräver att du godkänner
+  i en ruta på skärmen. Det går **inte** via SSH (t.ex. Termius från iPad), inte ens med `sudo`.
+  Kör `dotnet dev-certs https --trust` i **Terminal.app direkt på datorn**, eller öppna
+  **Nyckelhanterare → login → Certifikat**, sök `localhost`, dubbelklicka och välj **Lita på → Lita alltid på**.
+- Verifiera med `dotnet dev-certs https --check --trust` (ska visa "A trusted certificate was found").
+- Kör **inte** `--clean` efteråt, då skapas ett nytt (obetrott) certifikat.
+
+Om du bara kommer åt datorn via SSH kan du köra utan betrott certifikat och tunnla portarna
+(Dashboard `15259`, Web Frontend `5004`) med SSH port forwarding:
+
+```bash
+export ASPIRE_ALLOW_UNSECURED_TRANSPORT=true
+dotnet run --project AspireApp1.AppHost --launch-profile http
+```
+
 ### 3. Kör testerna
 
 ```bash
