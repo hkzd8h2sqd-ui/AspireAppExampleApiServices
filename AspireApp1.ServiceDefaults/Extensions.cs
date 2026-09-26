@@ -65,7 +65,10 @@ public static class Extensions
         });
         // Framework request/client access logs are high-volume; domain events retain their own structured logs.
         builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft.AspNetCore.Routing.EndpointMiddleware", LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft.AspNetCore.Http.Result", LogLevel.Warning);
         builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
 
         builder.Services.AddOpenTelemetry()
             .WithMetrics(metrics =>
