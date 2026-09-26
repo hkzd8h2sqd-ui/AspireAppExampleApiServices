@@ -218,8 +218,7 @@ public static class Extensions
                 ["trace_id"] = currentActivity?.TraceId.ToString(),
                 ["span_id"] = currentActivity?.SpanId.ToString(),
                 ["service.name"] = context.RequestServices.GetRequiredService<IHostEnvironment>().ApplicationName,
-                ["timestamp_utc"] = DateTimeOffset.UtcNow,
-                ["correlation_id"] = context.Items["correlation_id"]
+                ["timestamp_utc"] = DateTimeOffset.UtcNow
             }))
             {
                 await next();
