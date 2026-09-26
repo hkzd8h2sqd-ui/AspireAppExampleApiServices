@@ -65,6 +65,7 @@ app.MapGet("/forecast", async (IHttpClientFactory httpClientFactory, ILogger<Pro
 {
     var correlationId = httpContext.Items["correlation_id"]?.ToString() ?? Guid.NewGuid().ToString("N");
     httpContext.Items["correlation_id"] = correlationId;
+    httpContext.Response.Headers["X-Correlation-Id"] = correlationId;
     var forecastTraceId = Activity.Current?.TraceId.ToString();
     var forecastSpanId = Activity.Current?.SpanId.ToString();
 

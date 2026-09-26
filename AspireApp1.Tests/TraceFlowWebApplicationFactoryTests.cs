@@ -74,11 +74,16 @@ public class TraceFlowWebApplicationFactoryTests
         using var client = factory.CreateClient();
         using var response = await client.GetAsync("/forecast");
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        var businessId = response.Headers.GetValues("X-Correlation-Id").Single();
+        Assert.AreEqual(32, businessId.Length);
+        Assert.AreEqual(businessId, JsonDocument.Parse(workerRequests.Single().Body!).RootElement
+            .GetProperty("correlationId").GetString());
 
         var traceParent = workerRequests.Single().TraceParent;
         Assert.IsNotNull(traceParent);
         Assert.IsTrue(ActivityContext.TryParse(traceParent, null, out var context));
         Assert.AreNotEqual(default, context.TraceId);
+        Assert.AreNotEqual(context.TraceId.ToString(), businessId);
         var prefix = $"00-{context.TraceId}-";
         AssertHasTraceParentWithPrefix(staticWeatherRequests.Single(), prefix);
         foreach (var request in externalServiceRequests.All())
