@@ -28,9 +28,12 @@ public static class Extensions
         builder.AddDefaultHealthChecks();
 
         builder.Services.AddServiceDiscovery();
+        builder.Services.AddHttpContextAccessor();
+        builder.Services.AddTransient<BusinessCorrelationHandler>();
 
         builder.Services.ConfigureHttpClientDefaults(http =>
         {
+            http.AddHttpMessageHandler<BusinessCorrelationHandler>();
             // Turn on resilience by default
             http.AddStandardResilienceHandler();
 

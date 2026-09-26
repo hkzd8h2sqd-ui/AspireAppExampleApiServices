@@ -64,6 +64,7 @@ app.MapGet("/", () => "API service is running. Navigate to /forecast to see samp
 app.MapGet("/forecast", async (IHttpClientFactory httpClientFactory, ILogger<Program> logger, IHostEnvironment hostEnvironment, HttpContext httpContext, StateStoreDbContext db) =>
 {
     var correlationId = httpContext.Items["correlation_id"]?.ToString() ?? Guid.NewGuid().ToString("N");
+    httpContext.Items["correlation_id"] = correlationId;
     var forecastTraceId = Activity.Current?.TraceId.ToString();
     var forecastSpanId = Activity.Current?.SpanId.ToString();
 
