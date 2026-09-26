@@ -14,12 +14,12 @@ För en samlad helhetsbeskrivning av hur alla tjänster, flöden, spårning och 
 - [CLAUDE.md](CLAUDE.md)
 
 ## DIGG + W3C Trace Context (spårbarhet)
-- Tjänsterna använder W3C Trace Context (`traceparent`, `tracestate`) via .NET `Activity`/OpenTelemetry.
-- `trace_id`, `span_id`, `service.name`, `timestamp_utc` och `correlation_id` loggas strukturerat.
-- Korrelationskontext skickas från `apiserviceforecast` till `workerservice1` som jobbmeddelande.
-- Worker fortsätter samma trace med `traceparent` och propagaterar vidare vid utgående anrop.
-- Spans är namngivna per steg (t.ex. `ApiService.CallApiServiceForecast`, `ApiServiceForecast.CallStaticWeather`, `Worker.ProcessJob`, `Worker.CallStaticWeather`) för tydliga Aspire-grafer.
-- Felvägar (`/errorcall`, `/errorcall2`) loggar var i kedjan felet uppstår med `trace_id`, `span_id`, `parent_span_id` och `correlation_id`.
+- `AspireApp1.ServiceDefaults/Extensions.cs` konfigurerar W3C-format, OpenTelemetry-loggar/metrics/traces och OTLP-export när `OTEL_EXPORTER_OTLP_ENDPOINT` finns (Aspire sätter den lokalt). Varje tjänst registrerar **en** `ActivitySource` med sitt applikationsnamn, t.ex. `AspireApp1.WorkerService2`. Stabilt namngivna domänaktiviteter inkluderar `FlowRun.Start`, `FlowStep1.SyncValidate`, `FlowStep2.AsyncProcess`, `FlowStep3.AsyncFinalize`, `Worker.ProcessJob` och `ChainTrigger.Run`. `flow.run.id`, `job.id` och `retry.attempt` beskriver affärssteget; lägg aldrig payload eller personuppgifter i attribut.
+- ASP.NET Core skapar server-span (även en ny trace utan inkommande header); `IHttpClientFactory`/HTTP-instrumenteringen skapar klient-span och skickar `traceparent` samt `tracestate`. Skapa inte ytterligare klient-span för samma HTTP-anrop. Manuella aktiviteter används för domänsteg och kan vara `null` vid sampling; skapa då inte påhittade span-ID:n i StateStore.
+- `trace_id` (32 hex) identifierar den tekniska tracen och `span_id` (16 hex) ett steg. `correlation_id`, `flow_run_id` och `job_id` är **separata affärs-ID:n**, inte ersättare för trace-ID. Skicka `X-Correlation-Id` endast när ett affärs-ID finns; kopiera inte inkommande `traceparent` som ett svar. Loggscope för applikationsanrop innehåller `trace_id`, `span_id`, `service.name` och `timestamp_utc` i UTC. Logga status och undantagstyp, inte HTTP-svar/payload.
+- `/jobs` och `/flow/step` är asynkrona HTTP-till-Worker-övergångar: meddelandekontraktet (fältet `Version`, nu 1) bär `TraceParent`, `TraceState` samt affärs-ID separat, eftersom HTTP-serveraktiviteten avslutas innan Worker behandlar kön. Okänd version avvisas; äldre meddelanden utan versionsfält tolkas som v1. Varje försök får en `Consumer`-aktivitet med meddelandets ursprungliga W3C-context som parent, så retry och slutligt fel/dead-letter behåller samma trace. `Producer` används vid köläggning. HTTP-headern överför också trace till mottagande endpoint; den ersätter inte kontexten i det kölagrade meddelandet. Vid byte till extern kö ska samma fält flyttas till transportmetadata.
+- `Tracing:SamplingRatio` styr sampling av nya tracar (0–1, invariant decimalpunkt): 1 lokalt och 0,1 i produktion om den inte sätts. `ParentBasedSampler` respekterar inkommande W3C sampling-flagga. `/health`, `/alive`, Blazor-/frameworktrafik, statiska filer och StatusMonitor-pollningar filtreras ur traces; HTTP-frameworkets access-loggar på informationsnivå filtreras också. Fel vid hälsokontroll loggas fortfarande och hälsostatus sparas. Mät volym/overhead innan produktionsvärdet ändras.
+- FlowRun/FlowStep/SpanRecord i StateStore ger Processflöde steg, status, varaktighet och felpunkt även utan fullständiga spans. SpanRecord använder riktiga Activity-ID:n; samplade tracar visas i Aspire Dashboard. Tekniska trace-ID:n kan sökas i båda vyerna utan att exponera payload.
 
 ### Felsökning via `trace_id`
 1. Starta `AspireApp1.AppHost`.
@@ -30,7 +30,7 @@ För en samlad helhetsbeskrivning av hur alla tjänster, flöden, spårning och 
    - full `traceparent` (`00-<trace_id>-<span_id>-<flags>`)
    - Aspire URL-format, t.ex. `https://.../traces/detail/<trace_id>`
 5. Processflöde visar stegindikering i formatet **Steg X/N** samt markerar var flödet fastnat med tjänst och felorsak.
-6. Kontrollera worker-loggar för samma `trace_id` och `correlation_id` vid async-jobb/retry/finalt fel.
+6. Kontrollera worker-loggar för samma `trace_id` och separat `correlation_id` vid async-jobb/retry/finalt fel. För en fristående lokal demo, välj `StateStore:Provider=Sqlite` i AppHost och starta `/flowdemo`; jämför `trace_id` i Aspire Dashboard och `/processflow`. Välj en körning på `/flowruns` för att se steg, varaktighet och felpunkt.
 
 ## Frontend-visualisering av processflöde
 

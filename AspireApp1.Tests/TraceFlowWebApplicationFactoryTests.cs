@@ -33,6 +33,7 @@ public class TraceFlowWebApplicationFactoryTests
         using var client = factory.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Get, "/forecast");
         request.Headers.TryAddWithoutValidation("traceparent", incomingTraceParent);
+        request.Headers.TryAddWithoutValidation("tracestate", "vendor=value");
         request.Headers.TryAddWithoutValidation("X-Correlation-Id", incomingCorrelationId);
 
         using var response = await client.SendAsync(request);
@@ -49,11 +50,41 @@ public class TraceFlowWebApplicationFactoryTests
 
         var workerRequest = workerRequests.Single();
         AssertHasTraceParentWithPrefix(workerRequest, expectedTracePrefix);
+        Assert.AreEqual("vendor=value", workerRequest.TraceState);
 
         var workerPayload = JsonDocument.Parse(workerRequest.Body!);
         Assert.AreEqual(incomingCorrelationId, workerPayload.RootElement.GetProperty("correlationId").GetString());
         var payloadTraceParent = workerPayload.RootElement.GetProperty("traceParent").GetString();
         StringAssert.StartsWith(payloadTraceParent, expectedTracePrefix);
+        Assert.AreEqual("vendor=value", workerPayload.RootElement.GetProperty("traceState").GetString());
+    }
+
+    [TestMethod]
+    public async Task Forecast_WithoutIncomingTraceParent_CreatesNewTraceForAllDownstreamCalls()
+    {
+        var staticWeatherRequests = new RequestRecorder();
+        var externalServiceRequests = new RequestRecorder();
+        var workerRequests = new RequestRecorder();
+        await using var factory = CreateFactory(
+            _ => new HttpResponseMessage(HttpStatusCode.OK),
+            _ => new HttpResponseMessage(HttpStatusCode.OK),
+            _ => new HttpResponseMessage(HttpStatusCode.Accepted),
+            staticWeatherRequests, externalServiceRequests, workerRequests);
+
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/forecast");
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+
+        var traceParent = workerRequests.Single().TraceParent;
+        Assert.IsNotNull(traceParent);
+        Assert.IsTrue(ActivityContext.TryParse(traceParent, null, out var context));
+        Assert.AreNotEqual(default, context.TraceId);
+        var prefix = $"00-{context.TraceId}-";
+        AssertHasTraceParentWithPrefix(staticWeatherRequests.Single(), prefix);
+        foreach (var request in externalServiceRequests.All())
+        {
+            AssertHasTraceParentWithPrefix(request, prefix);
+        }
     }
 
     [TestMethod]
@@ -186,12 +217,21 @@ public class TraceFlowWebApplicationFactoryTests
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            TrySetTraceParentHeaderFromCurrentActivity(request);
+            // These preconstructed fake clients bypass the instrumented IHttpClientFactory pipeline.
+            if (!request.Headers.Contains("traceparent") && Activity.Current is { } activity)
+            {
+                request.Headers.TryAddWithoutValidation("traceparent", activity.Id);
+                if (!string.IsNullOrEmpty(activity.TraceStateString))
+                {
+                    request.Headers.TryAddWithoutValidation("tracestate", activity.TraceStateString);
+                }
+            }
 
             var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
             var recordedRequest = new RecordedRequest(
                 request.RequestUri?.AbsolutePath ?? string.Empty,
                 request.Headers.TryGetValues("traceparent", out var traceParents) ? traceParents.SingleOrDefault() : null,
+                request.Headers.TryGetValues("tracestate", out var traceStates) ? traceStates.SingleOrDefault() : null,
                 request.Headers.TryGetValues("X-Correlation-Id", out var correlationIds) ? correlationIds.SingleOrDefault() : null,
                 body);
 
@@ -199,13 +239,6 @@ public class TraceFlowWebApplicationFactoryTests
             return responder(recordedRequest);
         }
 
-        private static void TrySetTraceParentHeaderFromCurrentActivity(HttpRequestMessage request)
-        {
-            if (!request.Headers.Contains("traceparent") && !string.IsNullOrWhiteSpace(Activity.Current?.Id))
-            {
-                request.Headers.TryAddWithoutValidation("traceparent", Activity.Current.Id);
-            }
-        }
     }
 
     private sealed class RequestRecorder
@@ -221,5 +254,5 @@ public class TraceFlowWebApplicationFactoryTests
         public IReadOnlyList<RecordedRequest> All() => _requests;
     }
 
-    private sealed record RecordedRequest(string Path, string? TraceParent, string? CorrelationId, string? Body);
+    private sealed record RecordedRequest(string Path, string? TraceParent, string? TraceState, string? CorrelationId, string? Body);
 }

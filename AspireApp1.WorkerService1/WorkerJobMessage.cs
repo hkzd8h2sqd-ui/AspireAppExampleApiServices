@@ -4,4 +4,5 @@ public sealed record WorkerJobMessage(
     string JobId,
     string TraceParent,
     string? TraceState,
-    string CorrelationId);
+    string CorrelationId,
+    int Version = 1);

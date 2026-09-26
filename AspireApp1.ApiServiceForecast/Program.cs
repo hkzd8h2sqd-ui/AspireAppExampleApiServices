@@ -63,7 +63,7 @@ app.MapGet("/", () => "API service is running. Navigate to /forecast to see samp
 
 app.MapGet("/forecast", async (IHttpClientFactory httpClientFactory, ILogger<Program> logger, IHostEnvironment hostEnvironment, HttpContext httpContext, StateStoreDbContext db) =>
 {
-    var correlationId = httpContext.Items["correlation_id"]?.ToString() ?? Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
+    var correlationId = httpContext.Items["correlation_id"]?.ToString() ?? Guid.NewGuid().ToString("N");
     var forecastTraceId = Activity.Current?.TraceId.ToString();
     var forecastSpanId = Activity.Current?.SpanId.ToString();
 
@@ -83,8 +83,6 @@ app.MapGet("/forecast", async (IHttpClientFactory httpClientFactory, ILogger<Pro
         sw1HttpCode = (int)response.StatusCode;
         if (response.IsSuccessStatusCode)
         {
-            var content = await response.Content.ReadAsStringAsync();
-            logger.LogInformation("ApiServiceStaticWeather response content. response_content={response_content}", content);
             logger.LogInformation("ApiServiceStaticWeather response retrieved. trace_id={trace_id} span_id={span_id} parent_span_id={parent_span_id} service.name={service_name} timestamp_utc={timestamp_utc} correlation_id={correlation_id}",
                 Activity.Current?.TraceId.ToString(),
                 Activity.Current?.SpanId.ToString(),
@@ -112,12 +110,12 @@ app.MapGet("/forecast", async (IHttpClientFactory httpClientFactory, ILogger<Pro
     }
     var sw1End = DateTimeOffset.UtcNow;
 
-    if (forecastTraceId is not null)
+    if (forecastTraceId is not null && sw1SpanId is not null)
     {
         spanRecords.Add(new SpanRecord
         {
             TraceId = forecastTraceId,
-            SpanId = sw1SpanId ?? Guid.NewGuid().ToString("N"),
+            SpanId = sw1SpanId,
             ParentSpanId = forecastSpanId,
             ServiceName = hostEnvironment.ApplicationName,
             OperationName = "ApiServiceForecast.CallStaticWeather",
@@ -144,8 +142,6 @@ app.MapGet("/forecast", async (IHttpClientFactory httpClientFactory, ILogger<Pro
         var response = await httpClient2.GetAsync($"/employeeinfo/{employeeId}");
         if (response.IsSuccessStatusCode)
         {
-            var content = await response.Content.ReadAsStringAsync();
-            logger.LogInformation("ApiExternalService employee info response content. response_content={response_content}", content);
             logger.LogInformation("ApiExternalService employee info retrieved. trace_id={trace_id} span_id={span_id} parent_span_id={parent_span_id} service.name={service_name} timestamp_utc={timestamp_utc} correlation_id={correlation_id}",
                 Activity.Current?.TraceId.ToString(),
                 Activity.Current?.SpanId.ToString(),
@@ -159,8 +155,6 @@ app.MapGet("/forecast", async (IHttpClientFactory httpClientFactory, ILogger<Pro
         var response2 = await httpClient2.GetAsync($"/employeestatus/{employeeId}");
         if (response2.IsSuccessStatusCode)
         {
-            var content2 = await response2.Content.ReadAsStringAsync();
-            logger.LogInformation("ApiExternalService employee status response content. response_content={response_content}", content2);
             logger.LogInformation("ApiExternalService employee status retrieved. trace_id={trace_id} span_id={span_id} parent_span_id={parent_span_id} service.name={service_name} timestamp_utc={timestamp_utc} correlation_id={correlation_id}",
                 Activity.Current?.TraceId.ToString(),
                 Activity.Current?.SpanId.ToString(),
@@ -189,12 +183,12 @@ app.MapGet("/forecast", async (IHttpClientFactory httpClientFactory, ILogger<Pro
     }
     var ext1End = DateTimeOffset.UtcNow;
 
-    if (forecastTraceId is not null)
+    if (forecastTraceId is not null && ext1SpanId is not null)
     {
         spanRecords.Add(new SpanRecord
         {
             TraceId = forecastTraceId,
-            SpanId = ext1SpanId ?? Guid.NewGuid().ToString("N"),
+            SpanId = ext1SpanId,
             ParentSpanId = forecastSpanId,
             ServiceName = hostEnvironment.ApplicationName,
             OperationName = "ApiServiceForecast.CallExternalService",
@@ -208,8 +202,8 @@ app.MapGet("/forecast", async (IHttpClientFactory httpClientFactory, ILogger<Pro
     }
 
     // --- Queue worker job ---
-    var workerTraceParent = Activity.Current?.Id ?? httpContext.Items["traceparent"]?.ToString() ?? string.Empty;
-    var workerTraceState = Activity.Current?.TraceStateString ?? httpContext.Items["tracestate"]?.ToString();
+    var workerTraceParent = Activity.Current?.Id ?? string.Empty;
+    var workerTraceState = Activity.Current?.TraceStateString;
     var workerClient = httpClientFactory.CreateClient("workerservice1");
     var job = new WorkerJobMessage(
         Guid.NewGuid().ToString("N"),
@@ -240,8 +234,6 @@ app.MapGet("/forecast", async (IHttpClientFactory httpClientFactory, ILogger<Pro
         }
         else
         {
-            var workerResponseContent = await workerResponse.Content.ReadAsStringAsync();
-            logger.LogInformation("Worker job response content. response_content={response_content}", workerResponseContent);
             logger.LogInformation("Queued worker job {job_id}. trace_id={trace_id} span_id={span_id} parent_span_id={parent_span_id} service.name={service_name} timestamp_utc={timestamp_utc} correlation_id={correlation_id}",
                 job.JobId,
                 Activity.Current?.TraceId.ToString(),
@@ -254,12 +246,12 @@ app.MapGet("/forecast", async (IHttpClientFactory httpClientFactory, ILogger<Pro
     }
     var queueEnd = DateTimeOffset.UtcNow;
 
-    if (forecastTraceId is not null)
+    if (forecastTraceId is not null && queueSpanId is not null)
     {
         spanRecords.Add(new SpanRecord
         {
             TraceId = forecastTraceId,
-            SpanId = queueSpanId ?? Guid.NewGuid().ToString("N"),
+            SpanId = queueSpanId,
             ParentSpanId = forecastSpanId,
             ServiceName = hostEnvironment.ApplicationName,
             OperationName = "ApiServiceForecast.QueueWorkerJob",
@@ -297,7 +289,7 @@ app.MapGet("/forecast", async (IHttpClientFactory httpClientFactory, ILogger<Pro
 
 app.MapGet("/errorcall", async (IHttpClientFactory httpClientFactory, ILogger<Program> logger, IHostEnvironment hostEnvironment, HttpContext httpContext) =>
 {
-    var correlationId = httpContext.Items["correlation_id"]?.ToString() ?? Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
+    var correlationId = httpContext.Items["correlation_id"]?.ToString();
     var forecast = Enumerable.Range(1, 5).Select(index =>
         new WeatherForecast
         (
@@ -315,8 +307,6 @@ app.MapGet("/errorcall", async (IHttpClientFactory httpClientFactory, ILogger<Pr
         var response = await httpClient.GetAsync("/err");
         if (response.IsSuccessStatusCode)
         {
-            var content = await response.Content.ReadAsStringAsync();
-            logger.LogInformation("Error flow response content from apierrorservice. response_content={response_content}", content);
             logger.LogInformation("Error flow response received from apierrorservice. trace_id={trace_id} span_id={span_id} parent_span_id={parent_span_id} service.name={service_name} timestamp_utc={timestamp_utc} correlation_id={correlation_id}",
                 Activity.Current?.TraceId.ToString(),
                 Activity.Current?.SpanId.ToString(),
@@ -366,7 +356,8 @@ internal sealed record WorkerJobMessage(
     string JobId,
     string TraceParent,
     string? TraceState,
-    string CorrelationId);
+    string CorrelationId,
+    int Version = 1);
 
 public partial class Program;
 public sealed class ApiServiceForecastWebApplicationFactoryEntryPoint;

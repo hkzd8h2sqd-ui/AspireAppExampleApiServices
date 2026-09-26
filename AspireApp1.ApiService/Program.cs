@@ -41,7 +41,7 @@ app.MapGet("/", () => "API service is running. Navigate to /weather to see sampl
 
 app.MapGet("/weatherforecast", async (IHttpClientFactory httpClientFactory, ILogger<Program> logger, IHostEnvironment hostEnvironment, HttpContext httpContext) =>
 {
-    var correlationId = httpContext.Items["correlation_id"]?.ToString() ?? Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
+    var correlationId = httpContext.Items["correlation_id"]?.ToString();
     var forecast = Enumerable.Range(1, 5).Select(index =>
         new WeatherForecast
         (
@@ -59,8 +59,6 @@ app.MapGet("/weatherforecast", async (IHttpClientFactory httpClientFactory, ILog
         var response = await httpClient.GetAsync("/forecast");
         if (response.IsSuccessStatusCode)
         {
-            var content = await response.Content.ReadAsStringAsync();
-            logger.LogInformation("apiserviceforecast response content. response_content={response_content}", content);
             logger.LogInformation("apiserviceforecast response retrieved. trace_id={trace_id} span_id={span_id} parent_span_id={parent_span_id} service.name={service_name} timestamp_utc={timestamp_utc} correlation_id={correlation_id}",
                 Activity.Current?.TraceId.ToString(),
                 Activity.Current?.SpanId.ToString(),
@@ -93,7 +91,7 @@ app.MapGet("/weatherforecast", async (IHttpClientFactory httpClientFactory, ILog
 
 app.MapGet("/errorcall", async (IHttpClientFactory httpClientFactory, ILogger<Program> logger, IHostEnvironment hostEnvironment, HttpContext httpContext) =>
 {
-    var correlationId = httpContext.Items["correlation_id"]?.ToString() ?? Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
+    var correlationId = httpContext.Items["correlation_id"]?.ToString();
     var forecast = Enumerable.Range(1, 5).Select(index =>
         new WeatherForecast
         (
@@ -111,8 +109,6 @@ app.MapGet("/errorcall", async (IHttpClientFactory httpClientFactory, ILogger<Pr
         var response = await httpClient.GetAsync("/errorcall");
         if (response.IsSuccessStatusCode)
         {
-            var content = await response.Content.ReadAsStringAsync();
-            logger.LogInformation("Error flow response content from apiserviceforecast. response_content={response_content}", content);
             logger.LogInformation("Error flow response received from apiserviceforecast. trace_id={trace_id} span_id={span_id} parent_span_id={parent_span_id} service.name={service_name} timestamp_utc={timestamp_utc} correlation_id={correlation_id}",
                 Activity.Current?.TraceId.ToString(),
                 Activity.Current?.SpanId.ToString(),
@@ -151,7 +147,7 @@ app.MapGet("/errorcall", async (IHttpClientFactory httpClientFactory, ILogger<Pr
 
 app.MapGet("/errorcall2", async (IHttpClientFactory httpClientFactory, ILogger<Program> logger, IHostEnvironment hostEnvironment, HttpContext httpContext) =>
 {
-    var correlationId = httpContext.Items["correlation_id"]?.ToString() ?? Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
+    var correlationId = httpContext.Items["correlation_id"]?.ToString();
     var forecast = Enumerable.Range(1, 5).Select(index =>
         new WeatherForecast
         (
@@ -169,8 +165,6 @@ app.MapGet("/errorcall2", async (IHttpClientFactory httpClientFactory, ILogger<P
         var response = await httpClient.GetAsync("/err");
         if (response.IsSuccessStatusCode)
         {
-            var content = await response.Content.ReadAsStringAsync();
-            logger.LogInformation("Error flow response content from apierrorservice. response_content={response_content}", content);
             logger.LogInformation("Error flow response received from apierrorservice. trace_id={trace_id} span_id={span_id} parent_span_id={parent_span_id} service.name={service_name} timestamp_utc={timestamp_utc} correlation_id={correlation_id}",
                 Activity.Current?.TraceId.ToString(),
                 Activity.Current?.SpanId.ToString(),

@@ -35,7 +35,7 @@ app.MapGet("/", () => "API service is running. Navigate to /infoweather to see s
 
 app.MapGet("/infoweather", async (IHttpClientFactory httpClientFactory, ILogger<Program> logger, IHostEnvironment hostEnvironment, HttpContext httpContext) =>
 {
-    var correlationId = httpContext.Items["correlation_id"]?.ToString() ?? Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
+    var correlationId = httpContext.Items["correlation_id"]?.ToString();
     var id = Random.Shared.Next(1, 6); // Example employee ID for demonstration purposes
 
     // Call ApiServicePerson
@@ -49,7 +49,6 @@ app.MapGet("/infoweather", async (IHttpClientFactory httpClientFactory, ILogger<
         {
             var content = await response.Content.ReadAsStringAsync();
             isAlive = bool.TryParse(content, out var result) && result;
-            logger.LogInformation("ApiServicePerson status response content. response_content={response_content}", content);
             logger.LogInformation("ApiServicePerson status retrieved. trace_id={trace_id} span_id={span_id} parent_span_id={parent_span_id} service.name={service_name} timestamp_utc={timestamp_utc} correlation_id={correlation_id}",
                 Activity.Current?.TraceId.ToString(),
                 Activity.Current?.SpanId.ToString(),

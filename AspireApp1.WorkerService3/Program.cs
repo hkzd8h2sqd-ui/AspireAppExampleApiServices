@@ -29,10 +29,15 @@ await using (var scope = app.Services.CreateAsyncScope())
     await DatabaseInitializer.EnsureSchemaAsync(db);
 }
 
-var flowActivitySource = new ActivitySource("AspireApp1.WorkerService3.Flow");
+var flowActivitySource = new ActivitySource("AspireApp1.WorkerService3");
 
 app.MapPost("/jobs", async (WorkerJobMessage message, WorkerJobQueue queue, ILogger<Program> logger, IHostEnvironment hostEnvironment, HttpContext httpContext) =>
 {
+    if (message.Version != 1)
+    {
+        return Results.BadRequest("Unsupported job message version.");
+    }
+
     if (string.IsNullOrWhiteSpace(message.TraceParent))
     {
         logger.LogWarning("Worker job missing traceparent. trace_id={trace_id} span_id={span_id} parent_span_id={parent_span_id} service.name={service_name} timestamp_utc={timestamp_utc}",
@@ -69,6 +74,11 @@ app.MapPost("/flow/step", (
     ILogger<Program> logger,
     IHostEnvironment hostEnvironment) =>
 {
+    if (message.Version != 1)
+    {
+        return Results.BadRequest("Unsupported flow step message version.");
+    }
+
     var capturedTraceParent = Activity.Current?.Id ?? message.TraceParent;
     var capturedTraceState = Activity.Current?.TraceStateString ?? message.TraceState;
 
@@ -97,6 +107,11 @@ app.MapPost("/flow/retry-demo/step", (
     IHostEnvironment hostEnvironment,
     Microsoft.Extensions.Options.IOptions<FlowSimulationSettings> simulationOptions) =>
 {
+    if (message.Version != 1)
+    {
+        return Results.BadRequest("Unsupported flow step message version.");
+    }
+
     var simulationSettings = FlowSimulationPlanner.Normalize(message.SimulationSettings ?? simulationOptions.Value);
     var capturedTraceParent = Activity.Current?.Id ?? message.TraceParent;
     var capturedTraceState = Activity.Current?.TraceStateString ?? message.TraceState;
@@ -125,6 +140,11 @@ app.MapPost("/flow/intermittent-demo/step", (
     IHostEnvironment hostEnvironment,
     Microsoft.Extensions.Options.IOptions<FlowSimulationSettings> simulationOptions) =>
 {
+    if (message.Version != 1)
+    {
+        return Results.BadRequest("Unsupported flow step message version.");
+    }
+
     var simulationSettings = FlowSimulationPlanner.Normalize(message.SimulationSettings ?? simulationOptions.Value);
     var capturedTraceParent = Activity.Current?.Id ?? message.TraceParent;
     var capturedTraceState = Activity.Current?.TraceStateString ?? message.TraceState;
@@ -521,4 +541,5 @@ internal sealed record FlowStepMessage(
     string TraceParent,
     string? TraceState,
     string CorrelationId,
-    FlowSimulationSettings? SimulationSettings = null);
+    FlowSimulationSettings? SimulationSettings = null,
+    int Version = 1);
