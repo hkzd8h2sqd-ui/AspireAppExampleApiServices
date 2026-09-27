@@ -100,6 +100,7 @@ Databasen/schema skapas automatiskt vid startup om den saknas.
 3. Starta ett demo-flöde i `/flowdemo`.
 4. Öppna `/processflow` med trace/correlation.
 5. Verifiera stegstatus, tjänstekedja och ev. restart-flöde.
+6. Sök samma tekniska TraceId i Aspire Dashboard → Traces för exporterade spans. Processflöde läser StateStore och kan visa sparade steg även när sampling gör att Aspire saknar tracen; CorrelationId är ett separat affärs-ID.
 
 ## 9) Nyckelfiler att känna till
 

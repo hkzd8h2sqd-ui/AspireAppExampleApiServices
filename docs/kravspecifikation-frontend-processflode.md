@@ -1,5 +1,7 @@
 # Kravspecifikation: Frontend-visualisering av processflöde via traceId/correlationId
 
+> **Historisk kravspecifikation.** Den implementerade processvyn hämtar sparad status från StateStore och visar inte Aspire Dashboards fullständiga spans eller exporterade loggar. Se [README:s spårningsdemo](../ReadMe.md#getting-started) för aktuell datakälla och instruktioner.
+
 ## 1. Bakgrund och syfte
 
 I dagens system loggas varje tjänsteanrop med strukturerade fält som `trace_id`, `span_id`, `parent_span_id`, `correlation_id` och `service.name`. Spårbarhet hanteras via W3C Trace Context (`traceparent`/`tracestate`) och OpenTelemetry. Det finns ett behov av att kunna visualisera hela processflödet i frontend, från det initiala anropet till det slutliga svaret, så att man tydligt kan se var ett flöde lyckades eller misslyckades.

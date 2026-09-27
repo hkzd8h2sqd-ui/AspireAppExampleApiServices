@@ -29,7 +29,7 @@
             <span class="badge bg-info text-dark px-2 py-1">WS3 (asynkront)</span>
         </div>
         <p class="text-center text-muted small mt-2 mb-0">
-            Steg 1 körs synkront i WS1. Steg 2 och 3 körs asynkront med korta fördröjningar och rapporterar tillbaka via SQLite-tillståndslagret.
+            Steg 1 körs synkront i WS1. Steg 2 och 3 körs asynkront med korta fördröjningar och rapporterar status via StateStore (SQL Server eller SQLite).
         </p>
     </div>
 </div>
@@ -80,9 +80,17 @@
                 @if (_traceId is not null)
                 {
                     <dt class="col-sm-3">Trace ID</dt>
-                    <dd class="col-sm-9 font-monospace small">@_traceId</dd>
+                    <dd class="col-sm-9 font-monospace small">
+                        @_traceId
+                        <a class="ms-2" href="/processflow?traceId=@Uri.EscapeDataString(_traceId)">Visa i Processflöde →</a>
+                    </dd>
                 }
             </dl>
+            <p class="text-muted small mb-0">
+                Trace ID identifierar den tekniska kedjan: sök på samma ID i Aspire Dashboard → Traces för exporterade spans.
+                Correlation ID och Flow Run ID identifierar körningen i applikationen. Processflöde läser sparade steg och status från StateStore
+                och kan därför visa körningen även om spans inte exporterats på grund av sampling.
+            </p>
         </div>
     </div>
 
