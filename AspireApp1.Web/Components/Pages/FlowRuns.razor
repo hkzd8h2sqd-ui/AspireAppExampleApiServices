@@ -1,4 +1,4 @@
-@page "/flowruns"
+﻿@page "/flowruns"
 @rendermode InteractiveServer
 @implements IDisposable
 @using AspireApp1.StateStore
@@ -151,8 +151,8 @@ else
         _refreshTimer = new System.Threading.Timer(
             _ => InvokeAsync(RefreshAsync),
             null,
-            TimeSpan.FromSeconds(5),
-            TimeSpan.FromSeconds(5));
+            TimeSpan.FromSeconds(AutoRefreshSettings.IntervalSeconds),
+            TimeSpan.FromSeconds(AutoRefreshSettings.IntervalSeconds));
     }
 
     private async Task RefreshAsync()

@@ -1,4 +1,4 @@
-@page "/flowdemo"
+﻿@page "/flowdemo"
 @rendermode InteractiveServer
 @implements IDisposable
 @using System.Net.Http.Json
@@ -130,7 +130,7 @@
     {
         <div class="text-muted small mb-2">
             <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
-            Hämtar status automatiskt var 2:a sekund…
+            @($"Hämtar status automatiskt var {AutoRefreshSettings.IntervalSeconds}:e sekund…")
         </div>
     }
 
@@ -231,8 +231,8 @@
         _pollTimer = new System.Threading.Timer(
             _ => InvokeAsync(PollStatus),
             state: null,
-            dueTime: TimeSpan.FromSeconds(1),
-            period: TimeSpan.FromSeconds(2));
+            dueTime: TimeSpan.FromSeconds(AutoRefreshSettings.IntervalSeconds),
+            period: TimeSpan.FromSeconds(AutoRefreshSettings.IntervalSeconds));
     }
 
     private async Task PollStatus()
