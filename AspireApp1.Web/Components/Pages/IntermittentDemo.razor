@@ -94,7 +94,10 @@
                 @if (_traceId is not null)
                 {
                     <dt class="col-sm-3">Trace ID</dt>
-                    <dd class="col-sm-9 font-monospace small">@_traceId</dd>
+                    <dd class="col-sm-9 font-monospace small">
+                        @_traceId
+                        <a class="ms-2" href="/processflow?traceId=@Uri.EscapeDataString(_traceId)">Visa i Processflöde →</a>
+                    </dd>
                 }
             </dl>
         </div>
@@ -167,7 +170,7 @@
     {
         <div class="text-muted small mb-2">
             <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
-            Hämtar status automatiskt var 3:e sekund…
+            @($"Hämtar status automatiskt var {AutoRefreshSettings.IntervalSeconds}:e sekund…")
         </div>
     }
 
@@ -293,8 +296,8 @@
         _pollTimer = new System.Threading.Timer(
             _ => InvokeAsync(PollStatus),
             state: null,
-            dueTime: TimeSpan.FromSeconds(2),
-            period: TimeSpan.FromSeconds(3));
+            dueTime: TimeSpan.FromSeconds(AutoRefreshSettings.IntervalSeconds),
+            period: TimeSpan.FromSeconds(AutoRefreshSettings.IntervalSeconds));
     }
 
     private async Task PollStatus()

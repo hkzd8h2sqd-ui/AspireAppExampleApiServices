@@ -28,9 +28,8 @@ public class Worker(
     {
         if (!WorkerTraceContext.TryParse(job.TraceParent, job.TraceState, out var parentContext))
         {
-            logger.LogWarning("Invalid trace context for worker job {job_id}. traceparent={traceparent} correlation_id={correlation_id}",
+            logger.LogWarning("Invalid trace context for worker job {job_id}. correlation_id={correlation_id}",
                 job.JobId,
-                job.TraceParent,
                 job.CorrelationId);
             return;
         }
@@ -44,8 +43,8 @@ public class Worker(
             activity?.SetTag("retry.attempt", retryAttempt);
             activity?.SetTag("service.name", hostEnvironment.ApplicationName);
 
-            var traceId = Activity.Current?.TraceId.ToString();
-            var spanId = Activity.Current?.SpanId.ToString();
+            var traceId = activity?.TraceId.ToString() ?? parentContext.TraceId.ToString();
+            var spanId = activity?.SpanId.ToString();
 
             await PersistJobStateAsync(job.JobId, JobStatus.Processing, traceId, spanId, job.CorrelationId, null, stoppingToken);
 
@@ -61,13 +60,8 @@ public class Worker(
                     job.CorrelationId,
                     retryAttempt);
 
-                using var downstreamActivity = activitySource.StartActivity("Worker.CallStaticWeather", ActivityKind.Client);
                 var weatherClient = httpClientFactory.CreateClient("apiservicestaticweather");
                 var weatherResponse = await weatherClient.GetAsync("/infoweather", stoppingToken);
-                if (!weatherResponse.IsSuccessStatusCode)
-                {
-                    downstreamActivity?.SetStatus(ActivityStatusCode.Error, $"Status code: {weatherResponse.StatusCode}");
-                }
                 weatherResponse.EnsureSuccessStatusCode();
 
                 // After 3 seconds, chain the job forward to WorkerService3
@@ -88,8 +82,13 @@ public class Worker(
 
                 return;
             }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex) when (retryAttempt < MaxRetryAttempts)
             {
+                activity?.SetStatus(ActivityStatusCode.Error, ex.GetType().Name);
                 logger.LogWarning(ex, "Worker retry for job {job_id}. trace_id={trace_id} span_id={span_id} parent_span_id={parent_span_id} service.name={service_name} timestamp_utc={timestamp_utc} correlation_id={correlation_id} retry_attempt={retry_attempt}",
                     job.JobId,
                     traceId,
@@ -104,7 +103,10 @@ public class Worker(
             }
             catch (Exception ex)
             {
-                await PersistJobStateAsync(job.JobId, JobStatus.Failed, traceId, spanId, job.CorrelationId, ex.Message, stoppingToken);
+                activity?.SetStatus(ActivityStatusCode.Error, ex.GetType().Name);
+                var error = ex is HttpRequestException { StatusCode: { } statusCode }
+                    ? $"HTTP {(int)statusCode}" : ex.GetType().Name;
+                await PersistJobStateAsync(job.JobId, JobStatus.Failed, traceId, spanId, job.CorrelationId, error, stoppingToken);
 
                 logger.LogError(ex, "Worker final failure (dead-letter) for job {job_id}. trace_id={trace_id} span_id={span_id} parent_span_id={parent_span_id} service.name={service_name} timestamp_utc={timestamp_utc} correlation_id={correlation_id} retry_attempts={retry_attempts}",
                     job.JobId,
@@ -125,8 +127,8 @@ public class Worker(
         using var chainActivity = activitySource.StartActivity("Worker.ChainToWorkerService3", ActivityKind.Producer);
         var chainJob = new WorkerJobMessage(
             JobId: Guid.NewGuid().ToString("N"),
-            TraceParent: Activity.Current?.Id ?? string.Empty,
-            TraceState: Activity.Current?.TraceStateString,
+            TraceParent: Activity.Current?.Id ?? originalJob.TraceParent,
+            TraceState: Activity.Current?.TraceStateString ?? originalJob.TraceState,
             CorrelationId: originalJob.CorrelationId);
 
         try

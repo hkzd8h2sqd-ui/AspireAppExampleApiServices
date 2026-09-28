@@ -20,7 +20,7 @@ public class PeriodicChainTrigger(
     IServiceScopeFactory scopeFactory,
     IOptions<ServiceSettings> settings) : BackgroundService
 {
-    private static readonly ActivitySource activitySource = new("AspireApp1.WorkerService1.Chain");
+    private static readonly ActivitySource activitySource = new("AspireApp1.WorkerService1");
     private static readonly TimeSpan TriggerInterval = TimeSpan.FromSeconds(30);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -37,7 +37,8 @@ public class PeriodicChainTrigger(
 
     private async Task RunChainAsync(CancellationToken stoppingToken)
     {
-        using var rootActivity = activitySource.StartActivity("ChainTrigger.Run", ActivityKind.Producer);
+        using var rootActivity = activitySource.StartActivity("ChainTrigger.Run", ActivityKind.Producer)
+            ?? new Activity("ChainTrigger.Run").Start();
         var correlationId = Guid.NewGuid().ToString("N");
         var chainRunId = Guid.NewGuid().ToString("N");
         rootActivity?.SetTag("correlation.id", correlationId);

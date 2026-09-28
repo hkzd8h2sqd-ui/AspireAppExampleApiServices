@@ -1,4 +1,4 @@
-@page "/processflow"
+﻿@page "/processflow"
 @rendermode InteractiveServer
 @implements IDisposable
 
@@ -14,7 +14,8 @@
 
 <h1>Processflöde</h1>
 
-<p>Sök och visualisera telemetriflöden via TraceId, CorrelationId eller SpanId.</p>
+<p>Sök på tekniskt TraceId/SpanId eller separat affärsmässigt CorrelationId. Processvyn visar sparade steg och status i StateStore;
+   använd samma TraceId i Aspire Dashboard → Traces för exporterade spans (som kan vara samplade bort).</p>
 
 <!-- Search form -->
 <div class="search-panel mb-4">
@@ -37,7 +38,7 @@
                    placeholder="Ange ID..." @onkeydown="HandleKeyDown" />
         </div>
         <div class="col-md-3">
-            <button class="btn btn-primary w-100" @onclick="SearchAsync" disabled="@isLoading">
+            <button class="btn btn-primary w-100" @onclick="HandleSearchButtonClick" disabled="@isLoading">
                 @if (isLoading)
                 {
                     <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
@@ -107,6 +108,13 @@ else if (currentTrace is not null)
         @if (_copyFeedback is not null)
         {
             <span class="text-success small">@_copyFeedback</span>
+        }
+        @if (_autoRefreshCts is not null)
+        {
+            <span class="text-info small">
+                <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                @($"Uppdateras automatiskt var {AutoRefreshSettings.IntervalSeconds}:e sekund")
+            </span>
         }
     </div>
 
@@ -283,6 +291,7 @@ else if (currentTrace is not null)
     private string? _restartFeedback;
     private string? _restartError;
     private string? _copyFeedback;
+    private CancellationTokenSource? _autoRefreshCts;
     private System.Threading.Timer? _copyFeedbackTimer;
     private bool _initialParamSearchDone;
 
@@ -319,6 +328,7 @@ else if (currentTrace is not null)
 
     public void Dispose()
     {
+        StopAutoRefresh();
         _copyFeedbackTimer?.Dispose();
     }
 
@@ -330,30 +340,43 @@ else if (currentTrace is not null)
         }
     }
 
-    private async Task SearchAsync()
-    {
-        validationError = null;
-        notFound = false;
-        selectedSpanId = null;
-        highlightSpanId = null;
-        highlightedSpanIds = [];
-        openSpanDetailIds = [];
-        collapsedSpanIds = [];
-        _restartFeedback = null;
-        _restartError = null;
-        currentTrace = null;
+    private Task HandleSearchButtonClick() => SearchAsync();
 
-        if (string.IsNullOrWhiteSpace(searchInput))
+    private async Task SearchAsync(
+        bool isAutoRefresh = false,
+        string? refreshSearchType = null,
+        string? refreshSearchInput = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!isAutoRefresh)
+        {
+            StopAutoRefresh();
+            validationError = null;
+            notFound = false;
+            selectedSpanId = null;
+            highlightSpanId = null;
+            highlightedSpanIds = [];
+            openSpanDetailIds = [];
+            collapsedSpanIds = [];
+            _restartFeedback = null;
+            _restartError = null;
+            currentTrace = null;
+        }
+
+        var activeSearchType = isAutoRefresh ? refreshSearchType! : searchType;
+        var activeSearchInput = isAutoRefresh ? refreshSearchInput! : searchInput;
+
+        if (string.IsNullOrWhiteSpace(activeSearchInput))
         {
             validationError = "Ange ett ID att söka på.";
             return;
         }
 
-        var trimmedInput = searchInput.Trim();
+        var trimmedInput = activeSearchInput.Trim();
         var normalizedInput = trimmedInput;
         string? extractedSpanId = null;
 
-        if (searchType == "traceId")
+        if (activeSearchType == "traceId")
         {
             if (!TraceQueryService.TryNormalizeTraceIdInput(trimmedInput, out normalizedInput, out extractedSpanId))
             {
@@ -362,63 +385,143 @@ else if (currentTrace is not null)
             }
         }
 
-        if (searchType == "spanId" && !SpanIdRegex.IsMatch(trimmedInput))
+        if (activeSearchType == "spanId" && !SpanIdRegex.IsMatch(trimmedInput))
         {
             validationError = "SpanId måste vara exakt 16 hexadecimala tecken.";
             return;
         }
 
-        isLoading = true;
+        if (!isAutoRefresh)
+        {
+            isLoading = true;
+        }
+
         try
         {
-            TraceModel? trace = searchType switch
+            TraceModel? trace = activeSearchType switch
             {
-                "traceId" => await TraceQuery.GetByTraceIdAsync(normalizedInput),
-                "correlationId" => await TraceQuery.GetByCorrelationIdAsync(normalizedInput),
-                "spanId" => await TraceQuery.GetBySpanIdAsync(normalizedInput),
+                "traceId" => await TraceQuery.GetByTraceIdAsync(normalizedInput, cancellationToken),
+                "correlationId" => await TraceQuery.GetByCorrelationIdAsync(normalizedInput, cancellationToken),
+                "spanId" => await TraceQuery.GetBySpanIdAsync(normalizedInput, cancellationToken),
                 _ => null
             };
 
-            if (trace is null && searchType == "traceId")
+            if (trace is null && activeSearchType == "traceId")
             {
-                trace = await TraceQuery.GetByCorrelationIdAsync(normalizedInput);
+                trace = await TraceQuery.GetByCorrelationIdAsync(normalizedInput, cancellationToken);
             }
 
-            if (trace is null && searchType == "traceId" && extractedSpanId is not null)
+            if (trace is null && activeSearchType == "traceId" && extractedSpanId is not null)
             {
-                trace = await TraceQuery.GetBySpanIdAsync(extractedSpanId);
+                trace = await TraceQuery.GetBySpanIdAsync(extractedSpanId, cancellationToken);
             }
 
             if (trace is null || trace.Spans.Count == 0)
             {
-                notFound = true;
+                if (!isAutoRefresh)
+                {
+                    notFound = true;
+                }
             }
             else
             {
                 currentTrace = trace;
-                AddRecentSearch(searchType, trimmedInput);
+                if (!isAutoRefresh)
+                {
+                    AddRecentSearch(activeSearchType, trimmedInput);
+                }
 
-                if (searchType == "spanId")
+                if (!isAutoRefresh && activeSearchType == "spanId")
                 {
                     highlightSpanId = trimmedInput.ToLowerInvariant();
                     highlightedSpanIds = [highlightSpanId];
                 }
-                else if (searchType == "traceId" && extractedSpanId is not null)
+                else if (!isAutoRefresh && activeSearchType == "traceId" && extractedSpanId is not null)
                 {
                     highlightSpanId = extractedSpanId;
                     highlightedSpanIds = [highlightSpanId];
                 }
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Unexpected error while searching for trace. SearchType={SearchType} Input={Input}", searchType, searchInput);
-            notFound = true;
+            Logger.LogError(ex, "Unexpected error while searching for trace. SearchType={SearchType} Input={Input}", activeSearchType, activeSearchInput);
+            if (!isAutoRefresh)
+            {
+                notFound = true;
+            }
         }
         finally
         {
-            isLoading = false;
+            if (!isAutoRefresh)
+            {
+                isLoading = false;
+                ConfigureAutoRefresh();
+            }
         }
+    }
+
+    private void ConfigureAutoRefresh()
+    {
+        if (currentTrace?.Spans.Any(span => span.Status == SpanStatus.InProgress) != true)
+        {
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _autoRefreshCts = cts;
+        _ = RefreshWhileInProgressAsync(searchType, searchInput, cts);
+    }
+
+    private async Task RefreshWhileInProgressAsync(string refreshSearchType, string refreshSearchInput, CancellationTokenSource cts)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(AutoRefreshSettings.IntervalSeconds));
+            while (await timer.WaitForNextTickAsync(cts.Token))
+            {
+                await InvokeAsync(async () =>
+                {
+                    await SearchAsync(true, refreshSearchType, refreshSearchInput, cts.Token);
+                    StateHasChanged();
+                });
+
+                if (currentTrace?.Spans.Any(span => span.Status == SpanStatus.InProgress) != true)
+                {
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Automatic ProcessFlow refresh stopped unexpectedly.");
+        }
+        finally
+        {
+            if (ReferenceEquals(_autoRefreshCts, cts))
+            {
+                _autoRefreshCts = null;
+                if (!cts.IsCancellationRequested)
+                {
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+
+            cts.Dispose();
+        }
+    }
+
+    private void StopAutoRefresh()
+    {
+        var cts = _autoRefreshCts;
+        _autoRefreshCts = null;
+        cts?.Cancel();
     }
 
     private void AddRecentSearch(string type, string input)

@@ -1,11 +1,12 @@
-﻿using Microsoft.AspNetCore.Builder;
+﻿using AspireApp1.ServiceDefaults;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.ServiceDiscovery;
 using System.Diagnostics;
-using System.Text;
+using System.Globalization;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
@@ -27,9 +28,12 @@ public static class Extensions
         builder.AddDefaultHealthChecks();
 
         builder.Services.AddServiceDiscovery();
+        builder.Services.AddHttpContextAccessor();
+        builder.Services.AddTransient<BusinessCorrelationHandler>();
 
         builder.Services.ConfigureHttpClientDefaults(http =>
         {
+            http.AddHttpMessageHandler<BusinessCorrelationHandler>();
             // Turn on resilience by default
             http.AddStandardResilienceHandler();
 
@@ -48,11 +52,26 @@ public static class Extensions
 
     public static TBuilder ConfigureOpenTelemetry<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
+        Activity.DefaultIdFormat = ActivityIdFormat.W3C;
+        Activity.ForceDefaultIdFormat = true;
+
+        var samplingRatio = double.TryParse(builder.Configuration["Tracing:SamplingRatio"],
+            NumberStyles.Float, CultureInfo.InvariantCulture, out var configuredRatio)
+            && configuredRatio is >= 0 and <= 1
+            ? configuredRatio
+            : builder.Environment.IsDevelopment() ? 1.0 : 0.1;
+
         builder.Logging.AddOpenTelemetry(logging =>
         {
             logging.IncludeFormattedMessage = true;
             logging.IncludeScopes = true;
         });
+        // Framework request/client access logs are high-volume; domain events retain their own structured logs.
+        builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft.AspNetCore.Routing.EndpointMiddleware", LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft.AspNetCore.Http.Result", LogLevel.Warning);
+        builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
 
         builder.Services.AddOpenTelemetry()
             .WithMetrics(metrics =>
@@ -63,18 +82,16 @@ public static class Extensions
             })
             .WithTracing(tracing =>
             {
-                tracing.SetSampler(new BlazorComponentHubSampler())
+                tracing.SetSampler(new DiagnosticNoiseSampler(new ParentBasedSampler(new TraceIdRatioBasedSampler(samplingRatio))))
                     .AddSource(builder.Environment.ApplicationName)
                     .AddAspNetCoreInstrumentation(tracing =>
-                        // Exclude health check requests from tracing
-                        tracing.Filter = context =>
-                            !context.Request.Path.StartsWithSegments(HealthEndpointPath)
-                            && !context.Request.Path.StartsWithSegments(AlivenessEndpointPath)
-                            && !context.Request.Path.StartsWithSegments("/_blazor")
+                        tracing.Filter = context => !TraceConventions.IsNoisePath(context.Request.Path.Value)
                     )
                     // Uncomment the following line to enable gRPC instrumentation (requires the OpenTelemetry.Instrumentation.GrpcNetClient package)
                     //.AddGrpcClientInstrumentation()
-                    .AddHttpClientInstrumentation();
+                    .AddHttpClientInstrumentation(tracing =>
+                        tracing.FilterHttpRequestMessage = request =>
+                            !TraceConventions.IsNoisePath(request.RequestUri?.AbsolutePath));
             });
 
         builder.AddOpenTelemetryExporters();
@@ -82,39 +99,25 @@ public static class Extensions
         return builder;
     }
 
-    private sealed class BlazorComponentHubSampler : Sampler
+    private sealed class DiagnosticNoiseSampler(Sampler parentBased) : Sampler
     {
-        private static readonly string[] StaticAssetExtensions =
-        [
-            ".css", ".js", ".map", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2"
-        ];
-
         public override SamplingResult ShouldSample(in SamplingParameters samplingParameters)
         {
-            if (ShouldDropByName(samplingParameters.Name))
+            if (samplingParameters.Name.StartsWith("StatusMonitor.", StringComparison.Ordinal)
+                || samplingParameters.Name.StartsWith("Microsoft.AspNetCore.Components.Server.ComponentHub/", StringComparison.Ordinal)
+                || samplingParameters.Name.StartsWith("Route -> ", StringComparison.Ordinal))
             {
                 return new SamplingResult(SamplingDecision.Drop);
             }
 
             if (samplingParameters.Kind == ActivityKind.Server
-                && TryGetRequestPath(samplingParameters.Tags, out var path))
+                && TryGetRequestPath(samplingParameters.Tags, out var path)
+                && TraceConventions.IsNoisePath(path))
             {
-                if (path.StartsWith("/_blazor", StringComparison.OrdinalIgnoreCase)
-                    || path.StartsWith("/_framework", StringComparison.OrdinalIgnoreCase)
-                    || path.StartsWith("/_content", StringComparison.OrdinalIgnoreCase)
-                    || IsStaticAssetPath(path))
-                {
-                    return new SamplingResult(SamplingDecision.Drop);
-                }
+                return new SamplingResult(SamplingDecision.Drop);
             }
 
-            return new SamplingResult(SamplingDecision.RecordAndSample);
-        }
-
-        private static bool ShouldDropByName(string activityName)
-        {
-            return activityName.StartsWith("Microsoft.AspNetCore.Components.Server.ComponentHub/", StringComparison.Ordinal)
-                || activityName.StartsWith("Route -> ", StringComparison.Ordinal);
+            return parentBased.ShouldSample(samplingParameters);
         }
 
         private static bool TryGetRequestPath(IEnumerable<KeyValuePair<string, object?>>? tags, out string path)
@@ -143,18 +146,6 @@ public static class Extensions
             return false;
         }
 
-        private static bool IsStaticAssetPath(string path)
-        {
-            foreach (var extension in StaticAssetExtensions)
-            {
-                if (path.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
     }
 
     private static TBuilder AddOpenTelemetryExporters<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
@@ -208,68 +199,33 @@ public static class Extensions
     {
         return app.Use(async (context, next) =>
         {
-            var traceParentHeader = SanitizeLogValue(context.Request.Headers["traceparent"].ToString());
-            var traceParent = !string.IsNullOrWhiteSpace(traceParentHeader) ? traceParentHeader : Activity.Current?.Id;
-            var traceState = SanitizeLogValue(context.Request.Headers["tracestate"].ToString());
-            var correlationId = SanitizeLogValue(context.Request.Headers["X-Correlation-Id"].ToString());
-
-            if (string.IsNullOrWhiteSpace(correlationId))
+            var correlationId = context.Request.Headers["X-Correlation-Id"].ToString();
+            if (!string.IsNullOrWhiteSpace(correlationId) && correlationId.Length <= 128
+                && correlationId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.'))
             {
-                correlationId = Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
-            }
-
-            context.Items["traceparent"] = traceParent ?? string.Empty;
-            context.Items["tracestate"] = traceState;
-            context.Items["correlation_id"] = correlationId;
-
-            context.Response.Headers["X-Correlation-Id"] = correlationId;
-            if (!string.IsNullOrWhiteSpace(traceParent))
-            {
-                context.Response.Headers["traceparent"] = traceParent;
+                context.Items["correlation_id"] = correlationId;
+                context.Response.Headers["X-Correlation-Id"] = correlationId;
             }
 
             var currentActivity = Activity.Current;
             var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("TraceContext");
+
+            if (TraceConventions.IsNoisePath(context.Request.Path.Value))
+            {
+                await next();
+                return;
+            }
 
             using (logger.BeginScope(new Dictionary<string, object?>
             {
                 ["trace_id"] = currentActivity?.TraceId.ToString(),
                 ["span_id"] = currentActivity?.SpanId.ToString(),
                 ["service.name"] = context.RequestServices.GetRequiredService<IHostEnvironment>().ApplicationName,
-                ["timestamp_utc"] = DateTimeOffset.UtcNow,
-                ["correlation_id"] = correlationId
+                ["timestamp_utc"] = DateTimeOffset.UtcNow
             }))
             {
-                try
-                {
-                    await next();
-                }
-                catch (OperationCanceledException ex)
-                {
-                    // Request was cancelled; this is normal for health checks and timeouts
-                    // Continue gracefully without rethrowing
-                    logger.LogInformation(ex, "Request was cancelled; this is normal for health checks and timeouts... Continue gracefully without rethrowing...");
-                }
+                await next();
             }
         });
-    }
-
-    private static string SanitizeLogValue(string? value)
-    {
-        if (string.IsNullOrEmpty(value))
-        {
-            return string.Empty;
-        }
-
-        var builder = new StringBuilder(value.Length);
-        foreach (var character in value)
-        {
-            if (!char.IsControl(character))
-            {
-                builder.Append(character);
-            }
-        }
-
-        return builder.ToString();
     }
 }

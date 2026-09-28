@@ -43,10 +43,15 @@ await using (var scope = app.Services.CreateAsyncScope())
     await DatabaseInitializer.EnsureSchemaAsync(db);
 }
 
-var flowActivitySource = new ActivitySource("AspireApp1.WorkerService1.Flow");
+var flowActivitySource = new ActivitySource("AspireApp1.WorkerService1");
 
 app.MapPost("/jobs", async (WorkerJobMessage message, WorkerJobQueue queue, ILogger<Program> logger, IHostEnvironment hostEnvironment, HttpContext httpContext) =>
 {
+    if (message.Version != 1)
+    {
+        return Results.BadRequest("Unsupported job message version.");
+    }
+
     if (string.IsNullOrWhiteSpace(message.TraceParent))
     {
         logger.LogWarning("Worker job missing traceparent. trace_id={trace_id} span_id={span_id} parent_span_id={parent_span_id} service.name={service_name} timestamp_utc={timestamp_utc}",
@@ -84,7 +89,7 @@ app.MapPost("/flow/start", async (
     ILogger<Program> logger,
     IHostEnvironment hostEnvironment) =>
 {
-    using var rootActivity = flowActivitySource.StartActivity("FlowRun.Start", ActivityKind.Server);
+    using var rootActivity = flowActivitySource.StartActivity("FlowRun.Start", ActivityKind.Internal);
     var flowRunId = Guid.NewGuid().ToString("N");
     var correlationId = Guid.NewGuid().ToString("N");
     var traceId = System.Diagnostics.Activity.Current?.TraceId.ToString();
@@ -229,7 +234,7 @@ app.MapPost("/flow/retry-demo/start", async (
     var profileDefaults = FlowSimulationPlanner.Normalize(profileOptions.Value.RetryDemo);
     var simulationSettings = FlowSimulationPlanner.Normalize(request?.SimulationSettings ?? profileDefaults);
     var maxAttempts = simulationSettings.RetryAttempts;
-    using var rootActivity = flowActivitySource.StartActivity("RetryDemoFlow.Start", ActivityKind.Server);
+    using var rootActivity = flowActivitySource.StartActivity("RetryDemoFlow.Start", ActivityKind.Internal);
     var flowRunId = Guid.NewGuid().ToString("N");
     var correlationId = Guid.NewGuid().ToString("N");
     var traceId = System.Diagnostics.Activity.Current?.TraceId.ToString();
@@ -289,7 +294,7 @@ app.MapPost("/flow/intermittent-demo/start", async (
     var profileDefaults = FlowSimulationPlanner.Normalize(profileOptions.Value.IntermittentDemo);
     var simulationSettings = FlowSimulationPlanner.Normalize(request?.SimulationSettings ?? profileDefaults);
     var maxAttempts = simulationSettings.RetryAttempts;
-    using var rootActivity = flowActivitySource.StartActivity("IntermittentDemoFlow.Start", ActivityKind.Server);
+    using var rootActivity = flowActivitySource.StartActivity("IntermittentDemoFlow.Start", ActivityKind.Internal);
     var flowRunId = Guid.NewGuid().ToString("N");
     var correlationId = Guid.NewGuid().ToString("N");
     var traceId = System.Diagnostics.Activity.Current?.TraceId.ToString();
@@ -662,7 +667,8 @@ internal sealed record FlowStepMessage(
     string TraceParent,
     string? TraceState,
     string CorrelationId,
-    FlowSimulationSettings? SimulationSettings = null);
+    FlowSimulationSettings? SimulationSettings = null,
+    int Version = 1);
 
 internal sealed record FlowStartResponse(
     string FlowRunId,

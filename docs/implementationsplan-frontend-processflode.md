@@ -1,5 +1,7 @@
 # Implementationsplan: Frontend-visualisering av processflöde
 
+> **Historisk plan (2026-07-02), inte beskrivning av nuvarande arkitektur.** Dagens `/processflow` läser FlowRun/FlowStep/SpanRecord och övriga statusposter från StateStore via `TraceQueryService`, inte Aspire Dashboards interna API eller dess databas. Aspire Dashboard tar emot exporterade OpenTelemetry-spans separat; se [README:s spårningsdemo](../ReadMe.md#getting-started) för aktuell start- och felsökningsguide.
+
 **Baseras på:** [Kravspecifikation – Frontend-visualisering av processflöde](kravspecifikation-frontend-processflode.md)
 **Version:** 1.0
 **Datum:** 2026-07-02

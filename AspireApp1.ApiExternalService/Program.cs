@@ -19,6 +19,7 @@ var app = builder.Build();
 
 // Configure the HTTP request pipeline.
 app.UseExceptionHandler();
+app.UseTraceContextLogScope();
 
 if (app.Environment.IsDevelopment())
 {
@@ -40,7 +41,7 @@ app.MapGet("/employeeinfo/{id}", (int id) =>
 .WithName("GetEmployeeInfoById");
 
 
-app.MapGet("/employeestatus/{id}", async (int id, IHttpClientFactory httpClientFactory) =>
+app.MapGet("/employeestatus/{id}", async (int id, IHttpClientFactory httpClientFactory, ILogger<Program> logger) =>
 {
     var employee = Employees.GetEmployees().FirstOrDefault(e => e.EmployeeNo == id);
     if (employee == null)
@@ -57,13 +58,12 @@ app.MapGet("/employeestatus/{id}", async (int id, IHttpClientFactory httpClientF
         if (response.IsSuccessStatusCode)
         {
             var content = await response.Content.ReadAsStringAsync();
-            Console.WriteLine($"ApiServicePerson response: {content}");
             isAlive = bool.TryParse(content, out var result) && result;
         }
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"Error calling ApiServicePerson: {ex.Message}");
+        logger.LogWarning("Error calling ApiServicePerson. error_type={error_type}", ex.GetType().Name);
     }
 
     EmployeeStatus status = new EmployeeStatus
