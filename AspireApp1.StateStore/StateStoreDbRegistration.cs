@@ -29,6 +29,15 @@ public static class StateStoreDbRegistration
         return services;
     }
 
+    /// <summary>
+    /// Resolves which database provider the StateStore should use.
+    /// </summary>
+    /// <param name="configuration">Configuration containing <c>StateStore:Provider</c>.</param>
+    /// <returns><c>"sqlserver"</c> or <c>"sqlite"</c>.</returns>
+    /// <remarks>
+    /// Defaults to SQLite when the key is missing or unrecognised, so the solution runs
+    /// out of the box on macOS/Linux without a local SQL Server instance.
+    /// </remarks>
     public static string ResolveProvider(IConfiguration configuration)
     {
         var provider = configuration[ProviderConfigKey]?.Trim();
@@ -37,12 +46,7 @@ public static class StateStoreDbRegistration
             return SqlServerProvider;
         }
 
-        if (string.Equals(provider, "Sqlite", StringComparison.OrdinalIgnoreCase))
-        {
-            return SqliteProvider;
-        }
-
-        return SqlServerProvider;
+        return SqliteProvider;
     }
 
     public static string ResolveConnectionString(IConfiguration configuration, string provider)
