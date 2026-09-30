@@ -32,6 +32,10 @@ builder.Services.AddConfiguredStateStoreDbContextFactory(builder.Configuration);
 // TraceQueryService builds TraceModel objects from state-store records written by the worker services.
 builder.Services.AddScoped<TraceQueryService>();
 
+// InsightsQueryService aggregates recent state-store data for the /insights page.
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddScoped<AspireApp1.Web.Insights.InsightsQueryService>();
+
 var app = builder.Build();
 
 await using (var scope = app.Services.CreateAsyncScope())
