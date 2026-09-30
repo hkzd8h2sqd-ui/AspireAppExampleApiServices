@@ -39,18 +39,15 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
 
         var jobs = await db.JobStates
             .Where(j => j.TraceId != null && j.TraceId.ToLower() == normalizedId)
-            .OrderBy(j => j.CreatedAt)
-            .ToListAsync(cancellationToken);
+            .ToListOrderedByAsync(j => j.CreatedAt, cancellationToken);
 
         var chainRuns = await db.ChainRunRecords
             .Where(c => c.TraceId != null && c.TraceId.ToLower() == normalizedId)
-            .OrderBy(c => c.StartedAt)
-            .ToListAsync(cancellationToken);
+            .ToListOrderedByAsync(c => c.StartedAt, cancellationToken);
 
         var healthRecords = await db.ServiceHealthRecords
             .Where(h => h.TraceId != null && h.TraceId.ToLower() == normalizedId)
-            .OrderBy(h => h.CheckedAt)
-            .ToListAsync(cancellationToken);
+            .ToListOrderedByAsync(h => h.CheckedAt, cancellationToken);
 
         var tracedFlowSteps = await db.FlowStepRecords
             .Where(s => s.TraceId != null && s.TraceId.ToLower() == normalizedId)
@@ -59,8 +56,7 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
 
         var directlyMatchedFlowRuns = await db.FlowRunRecords
             .Where(r => r.TraceId != null && r.TraceId.ToLower() == normalizedId)
-            .OrderBy(r => r.StartedAt)
-            .ToListAsync(cancellationToken);
+            .ToListOrderedByAsync(r => r.StartedAt, cancellationToken);
 
         var flowRunIds = tracedFlowSteps
             .Select(s => s.FlowRunId)
@@ -70,8 +66,7 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
         var flowRuns = flowRunIds.Count > 0
             ? await db.FlowRunRecords
                 .Where(r => flowRunIds.Contains(r.FlowRunId))
-                .OrderBy(r => r.StartedAt)
-                .ToListAsync(cancellationToken)
+                .ToListOrderedByAsync(r => r.StartedAt, cancellationToken)
             : [];
         var flowSteps = flowRunIds.Count > 0
             ? await db.FlowStepRecords
@@ -82,8 +77,7 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
 
         var spanRecords = await db.SpanRecords
             .Where(s => s.TraceId != null && s.TraceId.ToLower() == normalizedId)
-            .OrderBy(s => s.StartTime)
-            .ToListAsync(cancellationToken);
+            .ToListOrderedByAsync(s => s.StartTime, cancellationToken);
 
         logger.LogInformation(
             "TraceQuery by traceId={TraceId}: jobs={JobCount} chainRuns={ChainCount} healthRecords={HealthCount} flowRuns={FlowRunCount} flowSteps={FlowStepCount} spanRecords={SpanCount}",
@@ -103,18 +97,15 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
 
         var jobs = await db.JobStates
             .Where(j => j.CorrelationId == normalizedId)
-            .OrderBy(j => j.CreatedAt)
-            .ToListAsync(cancellationToken);
+            .ToListOrderedByAsync(j => j.CreatedAt, cancellationToken);
 
         var chainRuns = await db.ChainRunRecords
             .Where(c => c.CorrelationId == normalizedId)
-            .OrderBy(c => c.StartedAt)
-            .ToListAsync(cancellationToken);
+            .ToListOrderedByAsync(c => c.StartedAt, cancellationToken);
 
         var flowRuns = await db.FlowRunRecords
             .Where(r => r.CorrelationId == normalizedId)
-            .OrderBy(r => r.StartedAt)
-            .ToListAsync(cancellationToken);
+            .ToListOrderedByAsync(r => r.StartedAt, cancellationToken);
 
         var flowRunIds = flowRuns.Select(r => r.FlowRunId).ToList();
         var flowSteps = flowRunIds.Count > 0
@@ -142,13 +133,11 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
         // Also load any health records and span records for the same traceId
         var healthRecords = await db.ServiceHealthRecords
             .Where(h => h.TraceId != null && h.TraceId.ToLower() == traceId.ToLower())
-            .OrderBy(h => h.CheckedAt)
-            .ToListAsync(cancellationToken);
+            .ToListOrderedByAsync(h => h.CheckedAt, cancellationToken);
 
         var spanRecords = await db.SpanRecords
             .Where(s => s.TraceId != null && s.TraceId.ToLower() == traceId.ToLower())
-            .OrderBy(s => s.StartTime)
-            .ToListAsync(cancellationToken);
+            .ToListOrderedByAsync(s => s.StartTime, cancellationToken);
 
         return BuildTraceModel(traceId, normalizedId, jobs, chainRuns, healthRecords, flowRuns, flowSteps, spanRecords);
     }
@@ -184,7 +173,7 @@ public class TraceQueryService(IDbContextFactory<StateStoreDbContext> dbFactory,
 
         var spanRecord = await db.SpanRecords
             .Where(s => s.SpanId.ToLower() == normalizedId)
-            .OrderBy(s => s.StartTime)
+            .OrderBy(s => s.Id)
             .FirstOrDefaultAsync(cancellationToken);
 
         if (spanRecord is not null)

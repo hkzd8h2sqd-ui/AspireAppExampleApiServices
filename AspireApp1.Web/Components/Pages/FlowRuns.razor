@@ -163,10 +163,13 @@ else
         {
             await using var db = await DbFactory.CreateDbContextAsync();
 
-            var flowRuns = await db.FlowRunRecords
-                .OrderByDescending(r => r.StartedAt)
+            // Order by Id in SQL (SQLite cannot ORDER BY DateTimeOffset), then by StartedAt in memory.
+            var flowRuns = (await db.FlowRunRecords
+                .OrderByDescending(r => r.Id)
                 .Take(100)
-                .ToListAsync();
+                .ToListAsync())
+                .OrderByDescending(r => r.StartedAt)
+                .ToList();
 
             var flowRunIds = flowRuns.Select(r => r.FlowRunId).ToList();
             var steps = flowRunIds.Count > 0

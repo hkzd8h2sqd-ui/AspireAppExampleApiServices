@@ -264,10 +264,13 @@
             _spanCount = await db.SpanRecords.CountAsync();
             _healthCheckCount = await db.ServiceHealthRecords.CountAsync();
 
-            var latestFlowRuns = await db.FlowRunRecords
-                .OrderByDescending(r => r.StartedAt)
+            // Order by Id in SQL (SQLite cannot ORDER BY DateTimeOffset), then by StartedAt in memory.
+            var latestFlowRuns = (await db.FlowRunRecords
+                .OrderByDescending(r => r.Id)
                 .Take(8)
-                .ToListAsync();
+                .ToListAsync())
+                .OrderByDescending(r => r.StartedAt)
+                .ToList();
 
             var flowRunIds = latestFlowRuns.Select(r => r.FlowRunId).ToList();
             var allSteps = flowRunIds.Count > 0
@@ -296,10 +299,12 @@
             _failedCount = _latestRuns.Count(r => r.Status == "Fel");
             _waitingCount = _latestRuns.Count(r => r.Status == "Väntar");
 
-            var latestHealthChecks = await db.ServiceHealthRecords
-                .OrderByDescending(h => h.CheckedAt)
+            var latestHealthChecks = (await db.ServiceHealthRecords
+                .OrderByDescending(h => h.Id)
                 .Take(2000)
-                .ToListAsync();
+                .ToListAsync())
+                .OrderByDescending(h => h.CheckedAt)
+                .ToList();
 
             _serviceHealthByService = latestHealthChecks
                 .GroupBy(h => h.ServiceName)
